@@ -91,9 +91,10 @@ Project ID: **vynl-b454c** (see `android/app/google-services.json` and `lib/fire
 In **Rules** tab you should see:
 
 - Root `.read` / `.write`: `false`
-- `nowPlaying/{uid}`: read if `auth != null`, write only own uid
+- `nowPlaying`: read if `auth != null` (required to list the live feed)
+- `nowPlaying/{uid}`: write only own uid
 - `users/{uid}`: read/write own profile; `listeningHistory` writable by owner
-- `rooms/{code}`: read/write for authenticated members (see deployed rules)
+- `rooms`: read/write for any signed-in user (join flow reads the room before adding a participant)
 - `songMeta`: read/write for any signed-in user (shared cache)
 
 ### 4. Test in Console
@@ -146,5 +147,5 @@ Requires **Blaze** (pay-as-you-go) plan for Cloud Functions. Spark plan cannot d
 | `permission-denied` on RTDB | Publish `database.rules.json`; user must be signed in |
 | Google Sign-In fails on phone | Add SHA-1 fingerprint; update `google-services.json` |
 | `network-request-failed` | Device internet; check Firebase project region |
-| Social feed empty | Rules published + another user signed in on second device |
+| Social feed empty | Publish rules (parent `nowPlaying` must be readable); two different accounts playing songs |
 | Functions not trimming history | Deploy functions; upgrade to Blaze plan |

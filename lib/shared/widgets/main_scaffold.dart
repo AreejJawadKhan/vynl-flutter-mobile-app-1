@@ -4,7 +4,7 @@ import '../../features/library/library_screen.dart';
 import '../../features/rooms/rooms_screen.dart';
 import '../../features/voice/voice_screen.dart';
 import '../../features/profile/profile_screen.dart';
-import '../../features/social/social_screen.dart';
+import '../../features/social/blend_screen.dart';
 import 'mini_player_stub.dart';
 
 class MainScaffold extends StatefulWidget {
@@ -19,7 +19,7 @@ class _MainScaffoldState extends State<MainScaffold> {
 
   static const List<Widget> _screens = [
     LibraryScreen(),
-    SocialScreen(),   // ← Social is now tab 1
+    const BlendScreen(isRootTab: true),
     RoomsScreen(),
     VoiceScreen(),
     ProfileScreen(),
@@ -61,7 +61,7 @@ class _MainScaffoldState extends State<MainScaffold> {
             NavigationDestination(
               icon: Icon(Icons.people_outline_rounded),
               selectedIcon: Icon(Icons.people_rounded),
-              label: 'Social',
+              label: 'Blend',
             ),
             NavigationDestination(
               icon: Icon(Icons.meeting_room_outlined),

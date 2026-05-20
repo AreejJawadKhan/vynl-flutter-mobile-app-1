@@ -7,9 +7,13 @@ import '../../core/constants/app_text_styles.dart';
 import '../auth/providers/auth_provider.dart' as ap;
 import 'providers/social_provider.dart';
 import 'models/social_models.dart';
+import 'widgets/listening_now_strip.dart';
 
 class BlendScreen extends StatefulWidget {
-  const BlendScreen({super.key});
+  /// When true, used as the bottom-nav Social tab (extra bottom padding).
+  final bool isRootTab;
+
+  const BlendScreen({super.key, this.isRootTab = false});
 
   @override
   State<BlendScreen> createState() => _BlendScreenState();
@@ -94,13 +98,30 @@ class _BlendScreenState extends State<BlendScreen>
   Widget build(BuildContext context) {
     final myUid = context.read<ap.AuthProvider>().uid;
 
+    final bottomPad = widget.isRootTab
+        ? AppConstants.miniPlayerCollapsedHeight +
+            AppConstants.bottomNavHeight +
+            AppConstants.spaceXL
+        : AppConstants.spaceL;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Find Your Blend')),
+      appBar: AppBar(
+        title: Text(widget.isRootTab ? 'Social & Blend' : 'Find Your Blend'),
+      ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.all(AppConstants.spaceL),
+        padding: EdgeInsets.fromLTRB(
+          AppConstants.spaceL,
+          AppConstants.spaceL,
+          AppConstants.spaceL,
+          bottomPad,
+        ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (widget.isRootTab) ...[
+              const ListeningNowStrip(),
+            ],
+
             // ── Your shareable ID ──────────────────────────────────
             Container(
               width: double.infinity,

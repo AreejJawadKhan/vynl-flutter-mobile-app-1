@@ -13,6 +13,9 @@ class SocialProvider extends ChangeNotifier {
   List<NowPlayingEntry> _feed = [];
   List<NowPlayingEntry> get feed => List.unmodifiable(_feed);
 
+  String? _feedError;
+  String? get feedError => _feedError;
+
   BlendResult? _blend;
   BlendResult? get blend => _blend;
 
@@ -52,37 +55,49 @@ class SocialProvider extends ChangeNotifier {
 
   void _startListeningFeed() {
     _feedSub?.cancel();
+    _feedError = null;
     final ref = FirebaseDatabase.instance.ref('nowPlaying');
     _feedSub = ref.onValue.listen(
-          (event) {
-        if (!event.snapshot.exists || event.snapshot.value == null) {
-          _feed = [];
-          notifyListeners();
-          return;
-        }
-        final map = event.snapshot.value as Map<dynamic, dynamic>;
-        _feed = map.entries
-            .where((e) => e.key != _auth?.uid)
-            .map((e) {
-          try {
-            return NowPlayingEntry.fromMap(
-              e.key as String,
-              Map<String, dynamic>.from(e.value as Map),
-            );
-          } catch (_) {
-            return null;
-          }
-        })
-            .whereType<NowPlayingEntry>()
-            .where((e) => e.isRecent)
-            .toList()
-          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      (event) {
+        _feedError = null;
+        _feed = _parseFeedSnapshot(event.snapshot);
         notifyListeners();
       },
       onError: (e) {
+        _feedError = e.toString();
         debugPrint('[SocialProvider] Feed error: $e');
+        notifyListeners();
       },
     );
+  }
+
+  List<NowPlayingEntry> _parseFeedSnapshot(DataSnapshot snapshot) {
+    if (!snapshot.exists || snapshot.value == null) return [];
+
+    final raw = snapshot.value;
+    if (raw is! Map) return [];
+
+    final myUid = _auth?.uid ?? '';
+    final map = Map<dynamic, dynamic>.from(raw);
+    return map.entries
+        .where((e) => e.key.toString() != myUid)
+        .map((e) {
+      try {
+        final value = e.value;
+        if (value is! Map) return null;
+        return NowPlayingEntry.fromMap(
+          e.key.toString(),
+          Map<String, dynamic>.from(value),
+        );
+      } catch (err) {
+        debugPrint('[SocialProvider] parse entry ${e.key}: $err');
+        return null;
+      }
+    })
+        .whereType<NowPlayingEntry>()
+        .where((e) => e.isRecent)
+        .toList()
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
   }
 
   Future<void> broadcastNowPlaying({
@@ -95,6 +110,7 @@ class SocialProvider extends ChangeNotifier {
     try {
       final ref = FirebaseDatabase.instance
           .ref('nowPlaying/${_auth!.uid}');
+      final now = DateTime.now().millisecondsSinceEpoch;
       await ref.set({
         'uid':         _auth!.uid,
         'displayName': _auth!.displayName,
@@ -103,7 +119,9 @@ class SocialProvider extends ChangeNotifier {
         'artist':      artist,
         'albumArtUrl': albumArtUrl ?? '',
         'genre':       genre ?? 'Unknown',
-        'timestamp':   ServerValue.timestamp,
+        // Client ms + server marker — feed works even before ServerValue resolves.
+        'timestamp':   now,
+        'updatedAt':   ServerValue.timestamp,
       });
     } catch (e) {
       debugPrint('[SocialProvider] broadcastNowPlaying error: $e');

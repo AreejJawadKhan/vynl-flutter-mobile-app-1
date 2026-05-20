@@ -28,11 +28,19 @@ class NowPlayingEntry {
       artist:      map['artist']      as String? ?? '',
       albumArtUrl: map['albumArtUrl'] as String? ?? '',
       genre:       map['genre']       as String? ?? 'Unknown',
-      timestamp:   map['timestamp']   as int?    ?? 0,
+      timestamp:   _readTimestamp(map['timestamp']),
     );
   }
 
+  static int _readTimestamp(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return 0;
+  }
+
+  /// Treat missing/zero timestamp as recent (ServerValue may resolve after first read).
   bool get isRecent {
+    if (timestamp <= 0) return true;
     final now = DateTime.now().millisecondsSinceEpoch;
     return (now - timestamp) < 10 * 60 * 1000;
   }

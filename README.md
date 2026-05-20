@@ -148,12 +148,15 @@ Deploy `database.rules.json` from the project root. Summary:
 | Path | Read | Write |
 |------|------|-------|
 | Root | Deny | Deny |
+| `nowPlaying` (list all) | Any signed-in user | — |
 | `nowPlaying/{uid}` | Any signed-in user | Only `auth.uid == $uid` |
 | `users/{uid}` | Any signed-in user | Only owner |
 | `users/{uid}/listeningHistory/*` | Any signed-in user | Only owner |
 | `songMeta/*` | Any signed-in user | Any signed-in user (shared enrichment cache) |
+| `rooms` (and children) | Any signed-in user | Any signed-in user |
+| `feed` | Any signed-in user | Any signed-in user (reserved; app uses `nowPlaying`) |
 
-**Important:** Until these rules are published in the Firebase Console, social features will log `permission-denied`.
+**Important:** Until these rules are published in the Firebase Console, RTDB features will log `permission-denied`. Room join/create reads `rooms/{code}` before you are a participant — stricter per-room rules in older commits caused rooms to kick users out; the flat `rooms` rules above match what the app expects.
 
 ---
 
