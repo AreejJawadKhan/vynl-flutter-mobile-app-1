@@ -252,42 +252,46 @@ class RoomProvider extends ChangeNotifier {
     final colorIndex =
         _uid!.hashCode.abs() % AppColors.participantColors.length;
 
-    final roomData = {
-      'code': code,
-      'name': roomName,
-      'hostId': _uid,
-      'status': 'idle',
+    final ref = FirebaseDatabase.instance.ref('rooms/$code');
+
+    // Single atomic write — room + host participant together
+    // This ensures participant exists before any read rule check
+    await ref.set({
+      'code':     code,
+      'name':     roomName,
+      'hostId':   _uid,
+      'status':   'idle',
       'settings': {
         'everyoneCanAdd': settings.everyoneCanAdd,
-        'majoritySkip': settings.majoritySkip,
+        'majoritySkip':   settings.majoritySkip,
       },
       'activeVoteType': null,
-      'voteCountdown': null,
-      'createdAt': ServerValue.timestamp,
-    };
-
-    final ref = FirebaseDatabase.instance.ref('rooms/$code');
-    await ref.set(roomData);
-
-    await ref.child('participants/$_uid').set({
-      'username': _auth!.displayName,
-      'colorIndex': colorIndex,
-      'isActive': true,
-      'joinedAt': ServerValue.timestamp,
+      'voteCountdown':  null,
+      'createdAt':      ServerValue.timestamp,
+      'participants': {
+        _uid!: {
+          'username':   _auth!.displayName,
+          'colorIndex': colorIndex,
+          'isActive':   true,
+          'joinedAt':   ServerValue.timestamp,
+        }
+      },
     });
+
+    // Set disconnect handler after atomic write succeeds
     await ref.child('participants/$_uid').onDisconnect().remove();
 
     _room = Room(
-      code: code,
-      name: roomName,
-      hostId: _uid!,
+      code:     code,
+      name:     roomName,
+      hostId:   _uid!,
       settings: settings,
       participants: [
         RoomParticipant(
-          id: _uid!,
-          username: _auth!.displayName,
+          id:         _uid!,
+          username:   _auth!.displayName,
           colorIndex: colorIndex,
-          isActive: true,
+          isActive:   true,
         ),
       ],
     );

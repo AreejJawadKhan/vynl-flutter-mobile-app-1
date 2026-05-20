@@ -62,16 +62,32 @@ class _ActiveRoomScreenState extends State<ActiveRoomScreen> {
     final room  = rooms.room;
 
     if (room == null) {
-      // Room closed from outside (e.g. host ended it)
+      // Only pop if we've been in the screen for a moment
+      // Don't pop immediately — give Firebase time to attach listeners
       if (!_isPopping) {
         _isPopping = true;
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) Navigator.of(context).pop();
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted && rooms.room == null) {
+            Navigator.of(context).pop();
+          } else {
+            // Firebase loaded — reset the flag
+            if (mounted) setState(() => _isPopping = false);
+          }
         });
       }
       return Scaffold(
         backgroundColor: Theme.of(context).scaffoldBackgroundColor,
-        body: const Center(child: CircularProgressIndicator()),
+        appBar: AppBar(title: const Text('Joining Room…')),
+        body: const Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Connecting to room…'),
+            ],
+          ),
+        ),
       );
     }
 

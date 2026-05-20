@@ -20,7 +20,8 @@ class RoomsScreen extends StatefulWidget {
 
 class _RoomsScreenState extends State<RoomsScreen> {
   final _joinCtrl = TextEditingController();
-  bool _joinError = false;
+  bool _joinError  = false;
+  String? _joinMsg;
 
   @override
   void dispose() {
@@ -29,6 +30,7 @@ class _RoomsScreenState extends State<RoomsScreen> {
   }
 
   Future<void> _openRoom(BuildContext context) async {
+    if (!context.mounted) return;
     await Navigator.of(context).push(MaterialPageRoute(
       builder: (_) => ChangeNotifierProvider<RoomProvider>.value(
         value: context.read<RoomProvider>(),
@@ -40,8 +42,6 @@ class _RoomsScreenState extends State<RoomsScreen> {
   @override
   Widget build(BuildContext context) {
     final rooms = context.watch<RoomProvider>();
-
-    // Navigation is handled explicitly now to avoid push-loops.
 
     return Scaffold(
       appBar: AppBar(title: const Text('Rooms')),
@@ -55,57 +55,63 @@ class _RoomsScreenState extends State<RoomsScreen> {
               AppConstants.spaceXL,
         ),
         children: [
-          // ── Active room shortcut ─────────────────────────────────────
           if (rooms.inRoom) ...[
             _CurrentRoomCard(
-              room:   rooms.room!,
+              room:  rooms.room!,
               onTap: () => _openRoom(context),
             ),
             const SizedBox(height: AppConstants.spaceL),
           ],
 
-          // ── Create room card ─────────────────────────────────────────
           _CreateRoomCard(onCreated: _openRoom),
 
           const SizedBox(height: AppConstants.spaceL),
 
-          // ── Join room card ───────────────────────────────────────────
           _JoinRoomCard(
             controller: _joinCtrl,
             hasError:   _joinError,
+            errorMsg:   _joinMsg,
             onJoin: () async {
               final code = _joinCtrl.text.trim().toUpperCase();
               if (code.length != AppConstants.roomCodeLength) {
-                setState(() => _joinError = true);
+                setState(() {
+                  _joinError = true;
+                  _joinMsg   = 'Enter a 6-character code';
+                });
                 return;
               }
-              setState(() => _joinError = false);
+              setState(() { _joinError = false; _joinMsg = null; });
+
               final ok = await rooms.joinRoom(code);
-              if (ok && context.mounted) {
+              if (!mounted) return;
+
+              if (ok) {
                 _joinCtrl.clear();
                 await _openRoom(context);
               } else {
                 setState(() {
                   _joinError = true;
+                  _joinMsg   = rooms.joinError ?? 'Could not join room';
                 });
-                final msg = rooms.joinError;
-                if (msg != null && context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(msg)),
-                  );
-                }
               }
             },
           ),
 
-          // ── Room history ─────────────────────────────────────────────
           if (rooms.history.isNotEmpty) ...[
             const SizedBox(height: AppConstants.spaceL),
             _RoomHistory(
               history: rooms.history,
-              onTap:   (code) async {
+              onTap: (code) async {
                 final ok = await rooms.joinRoom(code);
-                if (ok && context.mounted) await _openRoom(context);
+                if (!mounted) return;
+                if (ok) {
+                  await _openRoom(context);
+                } else {
+                  setState(() {
+                    _joinError = true;
+                    _joinMsg   = rooms.joinError ?? 'Could not rejoin room';
+                  });
+                }
               },
             ),
           ],
@@ -284,11 +290,13 @@ class _SettingToggle extends StatelessWidget {
 class _JoinRoomCard extends StatelessWidget {
   final TextEditingController controller;
   final bool hasError;
+  final String? errorMsg;      // ← add this
   final VoidCallback onJoin;
 
   const _JoinRoomCard({
     required this.controller,
     required this.hasError,
+    this.errorMsg,             // ← add this
     required this.onJoin,
   });
 
@@ -308,7 +316,7 @@ class _JoinRoomCard extends StatelessWidget {
               Container(
                 width: 40, height: 40,
                 decoration: BoxDecoration(
-                  color: AppColors.roseQuartz.withOpacity(0.12),
+                  color: AppColors.roseQuartz.withValues(alpha: 0.12),
                   shape: BoxShape.circle,
                 ),
                 child: const Icon(Icons.login_rounded,
@@ -318,7 +326,8 @@ class _JoinRoomCard extends StatelessWidget {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('Join a Room', style: AppTextStyles.headlineSmall),
+                  Text('Join a Room',
+                      style: AppTextStyles.headlineSmall),
                   Text('Enter a 6-character room code',
                       style: AppTextStyles.bodySmall),
                 ],
@@ -332,16 +341,16 @@ class _JoinRoomCard extends StatelessWidget {
             children: [
               Expanded(
                 child: TextField(
-                  controller:    controller,
+                  controller:         controller,
                   textCapitalization: TextCapitalization.characters,
-                  maxLength:     AppConstants.roomCodeLength,
-                  textInputAction: TextInputAction.done,
-                  onSubmitted:   (_) => onJoin(),
+                  maxLength:          AppConstants.roomCodeLength,
+                  textInputAction:    TextInputAction.done,
+                  onSubmitted:        (_) => onJoin(),
                   style: AppTextStyles.roomCode.copyWith(fontSize: 18),
                   decoration: InputDecoration(
                     hintText:    'ABC123',
                     counterText: '',
-                    errorText:   hasError ? 'Invalid code' : null,
+                    errorText:   hasError ? (errorMsg ?? 'Invalid code') : null,
                   ),
                 ),
               ),
