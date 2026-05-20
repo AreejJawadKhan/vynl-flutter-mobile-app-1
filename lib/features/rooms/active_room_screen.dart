@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import '../auth/providers/auth_provider.dart' as ap;
 
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_constants.dart';
@@ -281,11 +282,12 @@ class _QueueList extends StatelessWidget {
             ? 0.0
             : room.voterIds.length / room.participants.length;
 
+        final uid = context.read<ap.AuthProvider>().uid;
         return QueueItemTile(
           key:          ValueKey(item.id),
           item:         item,
           isFirst:      isFirst,
-          isHost:       room.isHost,
+          isHost:       room.isHostFor(uid),
           votingActive: voteActive,
           voteProgress: progress.clamp(0.0, 1.0),
           onRemove:     () => rooms.removeQueueItem(item.id),
@@ -420,7 +422,8 @@ class _AddSongButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final canAdd = room.settings.everyoneCanAdd || room.isHost;
+    final uid = context.read<ap.AuthProvider>().uid;
+    final canAdd = room.settings.everyoneCanAdd || room.isHostFor(uid);
     return GestureDetector(
       onTap: canAdd
           ? () async {

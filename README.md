@@ -1,258 +1,282 @@
-# AI Music Player
+# Vynl — AI Music Player
 
 **BS Computer Science — 6th Semester**  
-**Mobile Applications Development — Mid-Semester Project**  
-**40% Implementation Scope**
+**Mobile Applications Development**  
+**Project: Vynl (`music_player`)**
+
+Vynl is an Android-first Flutter music player that plays **local audio**, enriches your library with **Last.fm** metadata, adds **social listening** and **blend compatibility** via **Firebase**, and understands voice commands through **on-device speech recognition** plus **Google Gemini** intent parsing.
 
 ---
 
 ## Overview
 
-An AI-powered music player for Android that combines local music library management with social listening rooms and on-device voice search. The application demonstrates core mobile development principles including reactive state management, custom animations, background audio processing, and permission handling — all without any external API or database.
+| Layer | Technology |
+|--------|------------|
+| UI | Flutter (Material 3), custom vinyl animations |
+| State | `provider` (`ChangeNotifier` + proxy providers) |
+| Local audio | `on_audio_query`, `just_audio`, `just_audio_background` |
+| Auth | Firebase Auth (Google Sign-In, email/password) |
+| Cloud data | Firebase Realtime Database |
+| Analytics | Firebase Analytics |
+| AI voice | `speech_to_text` + **Gemini 2.0 Flash** (optional) + local keyword fallback |
+| Metadata | Last.fm API (`track.getInfo`) |
+
+**Not used:** YouTube Data API, cloud music streaming, or a traditional SQL database. Playback is always from files on the device.
 
 ---
 
 ## Features
 
-### Library & Playback
-- Scans device storage for all audio files using `on_audio_query`
-- Real-time search and three sort modes (Title A–Z, Artist A–Z, Recently Added)
-- Full playback controls: play, pause, next, previous, seek, shuffle, repeat (off / repeat-all / repeat-one)
-- Background audio with lock screen controls and notification via `just_audio_background`
-- Liked songs and recently played lists persisted to device storage
+### Authentication
+- **Auth gate:** The app home is `AuthGate` — unauthenticated users only see `AuthScreen`.
+- **Protected routes:** Named routes (`/now-playing`, `/playlists`) are wrapped in `AuthRequired`.
+- **Session restore:** Waits for Firebase `authStateChanges` before showing login or main UI (avoids login flash).
+- **Sign-in methods:** Google Sign-In and email/password (register + sign in).
+- **Validation:** Client-side email format and minimum password length before Firebase calls.
+- **Sign-out:** Clears analytics user id and removes the user’s `nowPlaying` RTDB entry.
 
-### Now Playing Screen
-- Spinning vinyl record animation at 33⅓ RPM built with `CustomPainter`
-- Tone-arm needle that swings onto the disc when playing and lifts when paused
-- Four animation states: playing (constant spin), paused (decelerate), buffering (pulse glow), error (shake)
-- Gesture control: tap to toggle play/pause, double-tap to like, swipe left/right to skip, long-press for song details
+### Library & playback
+- Scans device storage (`on_audio_query`) with storage permission handling
+- Search and sort (Title A–Z, Artist A–Z, Recently added)
+- Play / pause / seek / shuffle / repeat (off, all, one)
+- Background playback with notification controls
+- Liked songs and recently played (SharedPreferences)
+- **Enrichment:** Album art URLs and genres from Last.fm, cached in Firebase `songMeta` + local prefs (capped batch per scan for performance)
 
-### Glassmorphic Mini-Player
-- Persists above the bottom navigation bar on every screen
-- Collapsed state (70px): album art, song title, artist, play/pause, next
-- Expanded state (200px): full seek bar with live position, all controls, like button, mic shortcut
-- Frosted glass effect using Flutter's `BackdropFilter` with 20px blur
+### Now playing
+- Spinning vinyl at 33⅓ RPM (`CustomPainter`)
+- Tone-arm needle animation, buffering pulse, error shake
+- Gestures: tap play/pause, double-tap like, swipe skip, long-press details
 
-### Group Listening Rooms
-- Create a room with a generated 6-character alphanumeric code
-- Configurable settings: who can add songs, majority vote vs host-only skip
-- Simulated participants join automatically to demonstrate the full UI experience
-- Song queue with per-item vote buttons (thumbs up/down), NOW PLAYING badge, vote progress bar
-- Emoji reactions that float upward with fade animation
-- In-room chat, participant avatars with active/away status indicator
-- Room history (last 3 codes) persisted to device storage
+### Social
+- Live **Now Playing** feed (`nowPlaying/{uid}`) for other signed-in users
+- **Blend:** Compares listening histories (genres, artists, time-of-day) — requires both users to have played songs while signed in
+- Listening history recorded on each play (`users/{uid}/listeningHistory`)
 
-### AI Voice Search
-- Uses Android's on-device speech recognition — no cloud API required
-- Six supported intents: play by mood, play by activity, play random, playback control, what's playing, like song
-- Keyword maps for 5 moods (happy, sad, energetic, calm, focus) and 5 activities (workout, studying, relaxing, party, commute)
-- Suggestion chips that simulate commands without using the microphone
-- Animated sound wave visualiser during listening, command history (last 3)
+### Group listening rooms
+- Create/join rooms with a 6-character code (in-memory simulation)
+- Queue, voting, emoji reactions, chat UI
+- *Not networked* — participants are simulated locally (ready for a future WebSocket/Firebase backend)
+
+### AI voice search
+- Android speech-to-text for transcripts
+- **Gemini** parses intent when `GEMINI_API_KEY` is set and confidence &gt; 0.6
+- **Local keyword maps** as offline fallback (moods, activities, controls)
+- Suggestion chips and command history
 
 ### Profile
-- Editable username and avatar with 8 pastel colour options
-- Live stats: liked songs count, total library size, total listening time, rooms created
-- Dark mode toggle and microphone permission status
+- Avatar colours, username, stats (liked count, library size, listening time)
+- Dark mode, microphone permission, sign out
+
+### Mini-player
+- Glass-style bar above bottom navigation on all main tabs
+- Collapsed and expanded states with seek bar and controls
 
 ---
 
-## Technology Stack
-
-| Concern | Package |
-|---------|---------|
-| Audio playback | `just_audio ^0.9.36` |
-| Background audio | `just_audio_background ^0.0.1-beta.11` |
-| Audio session management | `audio_session ^0.1.18` |
-| Device library scan | `on_audio_query ^2.9.0` |
-| State management | `provider ^6.1.1` |
-| Local persistence | `shared_preferences ^2.2.2` |
-| Permission handling | `permission_handler ^11.1.0` |
-| Voice recognition | `speech_to_text ^6.6.0` |
-| Typography | `google_fonts ^6.2.1` |
-
-**No external API. No database. No cloud services.** All data is stored on-device via SharedPreferences.
-
----
-
-## Project Structure
+## Architecture
 
 ```
 lib/
-├── main.dart                            Entry point, MultiProvider, MaterialApp
+├── main.dart                 Firebase init, providers, MaterialApp, analytics observer
+├── firebase_options.dart     Generated Firebase config
 │
-├── core/                                Pure Dart — no Flutter widgets
-│   ├── constants/
-│   │   ├── app_colors.dart              Complete brand palette (30+ named constants)
-│   │   ├── app_constants.dart           All dimensions, durations, limits
-│   │   ├── app_routes.dart              Named route string constants
-│   │   ├── app_text_styles.dart         All TextStyle getters via GoogleFonts
-│   │   └── prefs_keys.dart              SharedPreferences key strings
-│   ├── theme/
-│   │   └── app_theme.dart               Full light + dark Material 3 ThemeData
-│   └── utils/
-│       ├── app_utils.dart               formatDuration, generateRoomCode
-│       └── permission_helper.dart       Storage + microphone permission wrappers
+├── core/
+│   ├── auth/auth_guard.dart  AuthRequired route wrapper
+│   ├── constants/            Colors, routes, env keys, prefs keys
+│   ├── theme/app_theme.dart  Light / dark Material 3
+│   └── utils/                Permissions, helpers
 │
 ├── features/
-│   ├── library/
-│   │   ├── library_screen.dart          Song list, search, sort
-│   │   ├── models/song_model.dart       SongItem class, SortMode enum
-│   │   ├── providers/library_provider.dart   Device scan, liked, recently played
-│   │   └── widgets/
-│   │       ├── album_art_widget.dart    Art thumbnail with placeholder fallback
-│   │       ├── song_list_tile.dart      List row with animated equaliser bars
-│   │       └── sort_bottom_sheet.dart   Sort picker modal (provider-safe)
-│   │
-│   ├── now_playing/
-│   │   ├── now_playing_screen.dart      Full playback screen
-│   │   └── widgets/
-│   │       ├── vinyl_widget.dart        StatefulWidget owning 4 AnimationControllers
-│   │       ├── vinyl_painter.dart       CustomPainter: disc, grooves, glint
-│   │       └── needle_painter.dart      CustomPainter: pivoting tone-arm
-│   │
-│   ├── rooms/
-│   │   ├── rooms_screen.dart            Lobby: create / join / history
-│   │   ├── active_room_screen.dart      Live room: queue, chat, emoji
-│   │   ├── models/room_models.dart      Room, Participant, QueueItem, etc.
-│   │   ├── providers/room_provider.dart In-memory simulation engine
-│   │   └── widgets/
-│   │       ├── participant_avatar.dart  Pastel avatar with active dot
-│   │       ├── queue_item_tile.dart     Queue row with vote buttons
-│   │       ├── emoji_reaction_overlay.dart  Floating emoji animations
-│   │       └── song_picker_sheet.dart   Pick song to add to queue
-│   │
-│   ├── voice/
-│   │   ├── voice_screen.dart            Mic, wave, transcript, suggestions
-│   │   ├── models/voice_models.dart     VoiceState, VoiceIntent, keyword maps
-│   │   └── providers/voice_provider.dart   STT wrapper + intent parser
-│   │
-│   └── profile/
-│       ├── profile_screen.dart          Avatar, username, stats, settings
-│       └── providers/profile_provider.dart  Username + avatar persistence
+│   ├── auth/                 AuthGate, AuthScreen, AuthProvider
+│   ├── library/              Scan, enrichment, playlists, liked/recent
+│   ├── now_playing/          Vinyl UI, full player screen
+│   ├── social/               Feed, blend, SocialProvider
+│   ├── rooms/                Simulated group rooms
+│   ├── voice/                STT + Gemini + local parser
+│   └── profile/              Settings and stats
+│
+├── services/
+│   ├── analytics_service.dart
+│   ├── gemini_service.dart
+│   └── music_enrichment_service.dart
 │
 └── shared/
-    ├── providers/
-    │   ├── audio_provider.dart          just_audio engine: full playback control
-    │   └── theme_provider.dart          Light/dark toggle, persisted
-    └── widgets/
-        ├── main_scaffold.dart           Bottom nav + IndexedStack root shell
-        ├── mini_player_stub.dart        Glassmorphic persistent mini-player
-        ├── empty_state_widget.dart      Reusable empty/error state
-        ├── app_snack_bar.dart           Consistent snackbar helper
-        └── widgets.dart                 Barrel export
+    ├── providers/            AudioProvider, ThemeProvider
+    └── widgets/              MainScaffold, mini player, empty states
 ```
+
+### Provider dependency graph
+
+```
+ThemeProvider
+AuthProvider
+LibraryProvider
+    └── SocialProvider (Proxy: Auth)
+            └── AudioProvider (Proxy2: Library + Social)
+                    ├── VoiceProvider (Proxy2: Audio + Library)
+                    └── RoomProvider (Proxy: Audio)
+PlaylistProvider (Proxy: Library)
+ProfileProvider
+```
+
+`ChangeNotifierProxyProvider` injects upstream providers so playback can record social history and voice can control audio.
+
+### Data stores
+
+| Store | Contents |
+|--------|----------|
+| **Device files** | Actual audio (MP3, etc.) |
+| **SharedPreferences** | Liked IDs, recent plays, theme, profile, local enrichment cache |
+| **Firebase RTDB** | `users/{uid}`, `listeningHistory`, `nowPlaying`, shared `songMeta` |
+| **Last.fm** | Track info (art, tags) — not stored on Last.fm servers by this app beyond API calls |
+| **Gemini API** | Stateless intent parsing per voice request |
 
 ---
 
-## State Management Architecture
+## Security model
 
-The app uses **Provider** for state management. All providers are declared at the root `MultiProvider` in `main.dart` in dependency order:
+### Client (Flutter)
+- Main UI only after `AuthProvider.isAuthenticated`
+- `SocialProvider` / Firebase writes check auth before RTDB access
+- `LibraryProvider` uses Firebase `songMeta` only when `FirebaseAuth.instance.currentUser != null`
+- Named routes require `AuthRequired`
 
-```
-ThemeProvider           (standalone)
-    └── LibraryProvider (standalone — scans device on creation)
-            └── AudioProvider (ProxyProvider: needs LibraryProvider to record plays)
-                    └── RoomProvider (ProxyProvider: needs AudioProvider to trigger playback)
-                    └── VoiceProvider (ProxyProvider2: needs both Audio + Library)
-ProfileProvider         (standalone)
-```
+### Server (Firebase Realtime Database)
+Deploy `database.rules.json` from the project root. Summary:
 
-`ChangeNotifierProxyProvider` is used where Provider B needs a reference to Provider A. The `update` callback injects the latest instance of A into B every time A changes.
+| Path | Read | Write |
+|------|------|-------|
+| Root | Deny | Deny |
+| `nowPlaying/{uid}` | Any signed-in user | Only `auth.uid == $uid` |
+| `users/{uid}` | Any signed-in user | Only owner |
+| `users/{uid}/listeningHistory/*` | Any signed-in user | Only owner |
+| `songMeta/*` | Any signed-in user | Any signed-in user (shared enrichment cache) |
 
-Modal bottom sheets use `ChangeNotifierProvider.value` to re-inject the needed provider into the new route context, since modal routes run in an overlay disconnected from the main provider tree.
-
----
-
-## Data Persistence
-
-All data is stored on-device via `SharedPreferences`. No database, no cloud sync.
-
-| Key | Type | Contents |
-|-----|------|----------|
-| `liked_songs` | `List<String>` | Song IDs of liked tracks |
-| `recently_played` | `List<String>` | Song IDs, newest first (max 20) |
-| `theme_mode` | `String` | `'light'`, `'dark'`, or `'system'` |
-| `room_history` | `List<String>` | Last 3 room codes |
-| `rooms_created` | `int` | Total rooms created |
-| `listening_time_ms` | `int` | Cumulative playback in milliseconds |
-| `username` | `String` | Display name |
-| `avatar_index` | `int` | Selected colour index (0–7) |
+**Important:** Until these rules are published in the Firebase Console, social features will log `permission-denied`.
 
 ---
 
-## Getting Started
+## Analytics events
+
+Implemented via `AnalyticsService` and `FirebaseAnalyticsObserver` (screen views):
+
+| Event | When |
+|--------|------|
+| `login` / `sign_up` | Successful auth |
+| `song_played` | Track starts |
+| `voice_command` | Voice intent executed (parser: `gemini` or `local`) |
+| `blend_calculated` | Blend screen completes |
+| `library_scan` | Library scan finishes |
+| `library_enrichment` | Background enrichment completes |
+
+User id is set on auth state change and cleared on sign-out.
+
+---
+
+## Environment variables
+
+Create a `.env` file in the project root (bundled as a Flutter asset — **do not commit secrets**):
+
+```env
+GEMINI_API_KEY=your_google_ai_studio_key
+LASTFM_API_KEY=your_lastfm_api_key
+```
+
+| Key | Used for |
+|-----|----------|
+| `GEMINI_API_KEY` | Voice intent parsing (`gemini-2.0-flash`) |
+| `LASTFM_API_KEY` | Album art + genre enrichment |
+
+If Gemini key is missing, voice still works via local keywords. If Last.fm key is missing, enrichment uses genre heuristics only.
+
+---
+
+## Getting started
 
 ### Prerequisites
 - Flutter SDK ≥ 3.1.0
-- Android Studio with Flutter and Dart plugins
-- Android device or emulator running API 21+ (Android 5.0+)
+- Android Studio / VS Code with Flutter extension
+- Android device or emulator (API 21+)
+- Firebase project with Auth, Realtime Database, and Analytics enabled
+- `google-services.json` in `android/app/` (already present for team project `vynl-b454c`)
 
 ### Setup
 
 ```bash
-# 1. Create a Flutter project skeleton (provides gradle wrapper, icons, etc.)
-flutter create --org com.example --project-name music_player music_player
-
-# 2. Replace the generated lib/ and config files with this project's files
-#    (see architecture above for which files go where)
-
-# 3. Create empty asset directories
-mkdir -p assets/images assets/icons
-
-# 4. Install dependencies
+# Install dependencies
 flutter pub get
 
-# 5. Run on a connected Android device or emulator
+# Add API keys (see Environment variables above)
+# copy .env.example .env   # if example file exists; otherwise create .env manually
+
+# Deploy RTDB rules (Firebase CLI) or paste database.rules.json in Console
+firebase deploy --only database
+
+# Run
 flutter run
 ```
 
-Grant **storage permission** on first launch for the library scan.  
-Grant **microphone permission** when using AI Voice Search.
-
+On first launch:
+1. Sign in (Google or email)
+2. Grant **audio/storage** permission for library scan
+3. Grant **microphone** permission for voice search
 
 ---
 
-## Android Permissions
+## Android permissions
 
 | Permission | Purpose |
-|-----------|---------|
-| `READ_MEDIA_AUDIO` (API 33+) | Read audio files from device storage |
-| `READ_EXTERNAL_STORAGE` (API ≤ 32) | Read audio files on older Android versions |
-| `RECORD_AUDIO` | AI voice search microphone access |
-| `FOREGROUND_SERVICE` | Background audio playback |
-| `FOREGROUND_SERVICE_MEDIA_PLAYBACK` | Lock screen and notification controls |
-| `WAKE_LOCK` | Keep CPU active during background playback |
-| `VIBRATE` | Haptic feedback on controls |
+|------------|---------|
+| `READ_MEDIA_AUDIO` (API 33+) | Read local audio |
+| `READ_EXTERNAL_STORAGE` (API ≤ 32) | Read local audio |
+| `RECORD_AUDIO` | Voice search |
+| `FOREGROUND_SERVICE` / `MEDIA_PLAYBACK` | Background audio |
+| `INTERNET` | Firebase, Last.fm, Gemini |
 
 ---
 
-## Design System
+## Design system
 
-**Color Palette** — all values defined in `AppColors`, no hardcoded hex anywhere else:
-
-| Token | Hex | Usage |
-|-------|-----|-------|
-| `darkBerry` | `#7D0531` | Primary buttons, active states, selected tab |
-| `roseQuartz` | `#B05276` | Secondary buttons, like heart, gradients |
-| `blush` | `#DBBABF` | Page backgrounds, card fills |
-| `sage` | `#75824D` | AI mic button, success states, CTA |
-| `stone` | `#C1BEB9` | Secondary text, borders, disabled icons |
-
-**Typography** — `GoogleFonts.poppins()` throughout, `GoogleFonts.robotoMono()` for room codes.  
-**Spacing** — 8px grid: `spaceXS(4)` → `spaceS(8)` → `spaceM(16)` → `spaceL(24)` → `spaceXL(32)`.
+Palette tokens in `AppColors`: `darkBerry`, `roseQuartz`, `blush`, `sage`, `stone`.  
+Typography: `GoogleFonts.poppins()`.  
+Spacing: 8px grid (`AppConstants`).
 
 ---
 
-## Known Limitations (Scope Boundaries)
+## Known limitations
 
-- **Rooms are simulated.** There is no real-time network. Participants are injected by `Timer` objects inside `RoomProvider`. The room model, queue logic, and voting system are fully implemented and could be connected to a WebSocket or Firebase backend by replacing only the private simulation methods.
-- **Voice search requires Android's speech engine.** The first use on some devices may require a brief internet connection to download the language model. After that it operates fully offline.
-- **No user authentication.** The local user is always the room host in simulation mode.
-- **Album art in lock screen notification** does not display. The `MediaItem` tag in `AudioProvider` does not yet resolve artwork bytes from `on_audio_query`.
+- **Rooms** are simulated locally, not real-time multiplayer.
+- **Enrichment** fetches up to 40 uncached tracks per library scan (remaining tracks on next scan).
+- **Blend** needs listening history from both accounts (play songs while signed in).
+- **YouTube API** is not integrated.
+- **iOS** may need extra Firebase/Google Sign-In setup beyond the Android-focused config.
 
 ---
 
-## Out of Scope- for now
+## Firebase setup (required)
 
-Cloud database, user authentication, internet music streaming, real friend lists, music downloading, push notifications, analytics, and advanced ML models.
+Step-by-step guide: **[docs/FIREBASE_SETUP.md](docs/FIREBASE_SETUP.md)**
 
+Covers Authentication providers, RTDB rules deploy, Analytics debug, and Cloud Functions.
+
+## Real-time rooms
+
+Rooms sync via `rooms/{code}` in Realtime Database (participants, queue, chat, votes). Join with a 6-character code on another signed-in device.
+
+## Cloud Functions
+
+See **[functions/README.md](functions/README.md)** — `trimListeningHistory` caps history at 200 entries per user.
+
+## Suggested future enhancements
+
+- Stricter `songMeta` write validation
+- iOS Firebase / Google Sign-In parity
+- Room host handoff and private rooms
+- CI workflow and integration tests
+
+---
+
+## License / academic use
+
+Course project for Mobile Applications Development. Firebase and API keys are team-specific; do not commit `.env` to public repositories.

@@ -161,7 +161,7 @@ class Room {
         messages     = messages     ?? [],
         voterIds     = voterIds     ?? {};
 
-  bool get isHost => true; // In simulation the local user is always host
+  bool isHostFor(String userId) => hostId == userId;
 
   int get participantCount => participants.length;
 }

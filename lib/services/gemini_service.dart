@@ -8,16 +8,24 @@ class GeminiService {
   factory GeminiService() => _instance;
   GeminiService._internal();
 
+  static const _model =
+      'gemini-2.0-flash';
+
   final Dio _dio = Dio(BaseOptions(
-    baseUrl:
-    'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent',
     connectTimeout: const Duration(seconds: 15),
     receiveTimeout: const Duration(seconds: 15),
   ));
 
+  bool get isConfigured => Env.geminiKey.isNotEmpty;
+
   /// Parses a voice transcript into structured intent using Gemini.
   Future<GeminiIntent?> parseVoiceCommand(
       String transcript, List<String> availableGenres) async {
+    if (!isConfigured) {
+      debugPrint('[Gemini] GEMINI_API_KEY missing in .env — using local parser');
+      return null;
+    }
+
     final prompt = '''
 You are a music player voice assistant. Parse this command into structured JSON.
 
@@ -40,7 +48,7 @@ If genre mentioned, match closest from available genres. If mood, map to genre i
 
     try {
       final response = await _dio.post(
-        '',
+        'https://generativelanguage.googleapis.com/v1beta/models/$_model:generateContent',
         queryParameters: {'key': Env.geminiKey},
         data: {
           'contents': [{'parts': [{'text': prompt}]}],
@@ -72,6 +80,8 @@ If genre mentioned, match closest from available genres. If mood, map to genre i
     required String genre,
     int count = 5,
   }) async {
+    if (!isConfigured) return [];
+
     final prompt = '''
 List $count popular ${genre} songs that someone might have on their phone. 
 Return ONLY a JSON array of strings in format "Artist - Title". No explanation.
@@ -79,7 +89,7 @@ Example: ["Artist1 - Song1", "Artist2 - Song2"]
 ''';
     try {
       final response = await _dio.post(
-        '',
+        'https://generativelanguage.googleapis.com/v1beta/models/$_model:generateContent',
         queryParameters: {'key': Env.geminiKey},
         data: {
           'contents': [{'parts': [{'text': prompt}]}],

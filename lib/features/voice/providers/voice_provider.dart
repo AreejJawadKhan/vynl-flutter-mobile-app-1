@@ -6,6 +6,7 @@ import 'package:speech_to_text/speech_to_text.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../features/library/providers/library_provider.dart';
 import '../../../shared/providers/audio_provider.dart';
+import '../../../services/analytics_service.dart';
 import '../../../services/gemini_service.dart';
 import '../models/voice_models.dart';
 
@@ -129,21 +130,39 @@ class VoiceProvider extends ChangeNotifier {
 
     // 3. Pick best result
     ParsedCommand? command;
-    if (geminiResult != null && geminiResult.confidence > 0.6) {
+    final usedGemini =
+        geminiResult != null && geminiResult.confidence > 0.6;
+    if (usedGemini) {
       command = _geminiIntentToCommand(geminiResult, words);
     }
     command ??= localCommand;
 
     if (command == null) {
+      await AnalyticsService.logVoiceCommand(
+        intent: 'unknown',
+        usedGemini: usedGemini,
+        success: false,
+      );
       _setError("I couldn't understand that. Try again?");
       return;
     }
 
     final executed = _executeCommand(command);
     if (!executed) {
+      await AnalyticsService.logVoiceCommand(
+        intent: command.intent.name,
+        usedGemini: usedGemini,
+        success: false,
+      );
       _setError("Couldn't find matching songs.");
       return;
     }
+
+    await AnalyticsService.logVoiceCommand(
+      intent: command.intent.name,
+      usedGemini: usedGemini,
+      success: true,
+    );
 
     _lastCommand   = command;
     _statusMessage = command.description;

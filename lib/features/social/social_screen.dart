@@ -32,7 +32,8 @@ class SocialScreen extends StatelessWidget {
       body: social.feed.isEmpty
           ? _buildEmpty()
           : RefreshIndicator(
-        onRefresh: () async {},
+        onRefresh: () =>
+            context.read<SocialProvider>().refreshFeed(),
         child: ListView.builder(
           padding: EdgeInsets.fromLTRB(
             AppConstants.spaceM, AppConstants.spaceM,

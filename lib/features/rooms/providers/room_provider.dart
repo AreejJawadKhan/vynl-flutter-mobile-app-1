@@ -1,68 +1,65 @@
-import '../../../core/constants/app_colors.dart';
 import 'dart:async';
 import 'dart:math';
 
+import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/constants/prefs_keys.dart';
 import '../../../core/utils/app_utils.dart';
+import '../../../features/auth/providers/auth_provider.dart' as ap;
 import '../../../features/library/models/song_model.dart';
+import '../../../services/room_rtdb_codec.dart';
 import '../../../shared/providers/audio_provider.dart';
 import '../models/room_models.dart';
 
-/// In-memory group room simulation engine.
-///
-/// There is no real network — all state lives in this provider.
-/// Simulated participants are injected on join so the demo works
-/// without a second device.
-///
-/// Design so that real networking (WebSocket / Firebase) can slot in
-/// later by replacing only the private simulation methods.
+/// Real-time group rooms backed by Firebase Realtime Database.
 class RoomProvider extends ChangeNotifier {
   AudioProvider? _audio;
+  ap.AuthProvider? _auth;
 
-  // ── Active room ───────────────────────────────────────────────────────────
   Room? _room;
   Room? get room => _room;
   bool get inRoom => _room != null;
 
-  // ── Emoji reactions queue ─────────────────────────────────────────────────
+  String? _joinError;
+  String? get joinError => _joinError;
+
   List<EmojiReaction> _reactions = [];
   List<EmojiReaction> get reactions => List.unmodifiable(_reactions);
 
-  // ── Timers ────────────────────────────────────────────────────────────────
-  Timer? _idleTimer;       // auto-close after 5 min with no participants
-  Timer? _simTimer;        // drives simulated participant activity
-  Timer? _voteTimer;       // countdown during a vote
-  Timer? _reactionTimer;   // (Deprecated: use _reactionTimers)
+  Timer? _idleTimer;
+  Timer? _voteTimer;
   final List<Timer> _reactionTimers = [];
+  final List<StreamSubscription<DatabaseEvent>> _roomSubs = [];
 
-  // ── Room history ──────────────────────────────────────────────────────────
-  List<String> _history = [];   // last 3 room codes
+  List<String> _history = [];
   List<String> get history => List.unmodifiable(_history);
 
-  // ── Simulated names pool ──────────────────────────────────────────────────
-  static const List<String> _simNames = [
-    'Alex', 'Jordan', 'Sam', 'Riley', 'Casey',
-    'Morgan', 'Taylor', 'Jamie', 'Quinn', 'Drew',
-  ];
-  static const List<String> _simEmojis = ['🎵', '🔥', '💃', '🎶', '✨', '😍', '🎸'];
-
   final Random _rng = Random();
-
-  // ── Local user ────────────────────────────────────────────────────────────
-  static const String _localUserId   = 'local_user';
-  static const String _localUserName = 'You';
+  String? _lastPlayedQueueHeadId;
+  bool _voteActionInProgress = false;
 
   RoomProvider() {
     _loadHistory();
   }
 
-  void updateAudio(AudioProvider audio) {
-    _audio = audio;
+  String? get _uid => _auth?.uid;
+  bool get _isAuthed => _auth?.isAuthenticated ?? false;
+
+  void updateAudio(AudioProvider audio) => _audio = audio;
+
+  void updateAuth(ap.AuthProvider auth) {
+    _auth = auth;
+    if (!auth.isAuthenticated && inRoom) {
+      leaveRoom();
+    }
   }
+
+  DatabaseReference get _roomRef =>
+      FirebaseDatabase.instance.ref('rooms/${_room!.code}');
 
   // ── History ───────────────────────────────────────────────────────────────
 
@@ -88,108 +85,349 @@ class RoomProvider extends ChangeNotifier {
     await prefs.setInt(PrefsKeys.roomsCreated, count + 1);
   }
 
-  // ── Room creation ─────────────────────────────────────────────────────────
+  Future<String> _allocateRoomCode() async {
+    for (var attempt = 0; attempt < 8; attempt++) {
+      final code = AppUtils.generateRoomCode();
+      final snap =
+          await FirebaseDatabase.instance.ref('rooms/$code').get();
+      if (!snap.exists) return code;
+    }
+    throw StateError('Could not allocate a unique room code');
+  }
 
-  /// Creates a new room and returns it.
-  /// Immediately adds the local user as host participant.
+  // ── RTDB listeners ────────────────────────────────────────────────────────
+
+  void _attachRoomListeners(String code) {
+    _cancelRoomSubs();
+    final base = FirebaseDatabase.instance.ref('rooms/$code');
+
+    _roomSubs.add(base.onValue.listen((event) {
+      if (!event.snapshot.exists || event.snapshot.value == null) {
+        if (inRoom) leaveRoom();
+        return;
+      }
+      _mergeRoomMeta(event.snapshot.value as Map<dynamic, dynamic>);
+    }));
+
+    _roomSubs.add(base.child('participants').onValue.listen((event) {
+      _mergeParticipants(event.snapshot);
+      notifyListeners();
+    }));
+
+    _roomSubs.add(base.child('queue').onValue.listen((event) {
+      _mergeQueue(event.snapshot);
+      _maybeSyncPlayback();
+      notifyListeners();
+    }));
+
+    _roomSubs.add(base.child('messages').onValue.listen((event) {
+      _mergeMessages(event.snapshot);
+      notifyListeners();
+    }));
+
+    _roomSubs.add(base.child('voters').onValue.listen((event) {
+      _mergeVoters(event.snapshot);
+      notifyListeners();
+    }));
+  }
+
+  void _cancelRoomSubs() {
+    for (final s in _roomSubs) {
+      s.cancel();
+    }
+    _roomSubs.clear();
+  }
+
+  void _mergeRoomMeta(Map<dynamic, dynamic> data) {
+    if (_room == null) return;
+    _room!.status =
+        RoomRtdbCodec.statusFromString(data['status']?.toString());
+    final voteType = data['activeVoteType']?.toString();
+    _room!.activeVoteType = voteType == 'skip'
+        ? VoteType.skip
+        : voteType == 'replay'
+            ? VoteType.replay
+            : null;
+    _room!.voteCountdown = (data['voteCountdown'] as num?)?.toInt();
+    notifyListeners();
+  }
+
+  void _mergeParticipants(DataSnapshot snap) {
+    if (_room == null) return;
+    if (!snap.exists || snap.value == null) {
+      _room!.participants = [];
+      return;
+    }
+    final map = snap.value as Map<dynamic, dynamic>;
+    _room!.participants = map.entries.map((e) {
+      return RoomRtdbCodec.participantFromMap(
+        e.key.toString(),
+        Map<dynamic, dynamic>.from(e.value as Map),
+      );
+    }).toList()
+      ..sort((a, b) => a.username.compareTo(b.username));
+  }
+
+  void _mergeQueue(DataSnapshot snap) {
+    if (_room == null) return;
+    if (!snap.exists || snap.value == null) {
+      _room!.queue = [];
+      return;
+    }
+    final map = snap.value as Map<dynamic, dynamic>;
+    final items = map.entries.map((e) {
+      final m = Map<dynamic, dynamic>.from(e.value as Map);
+      return MapEntry(
+        (m['order'] as num?)?.toInt() ?? 0,
+        RoomRtdbCodec.queueItemFromMap(e.key.toString(), m),
+      );
+    }).toList()
+      ..sort((a, b) => a.key.compareTo(b.key));
+    _room!.queue = items.map((e) => e.value).toList();
+  }
+
+  void _mergeMessages(DataSnapshot snap) {
+    if (_room == null) return;
+    if (!snap.exists || snap.value == null) {
+      _room!.messages = [];
+      return;
+    }
+    final map = snap.value as Map<dynamic, dynamic>;
+    final msgs = map.values
+        .map((v) => RoomRtdbCodec.messageFromMap(
+              Map<dynamic, dynamic>.from(v as Map),
+            ))
+        .toList()
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    if (msgs.length > 50) {
+      msgs.removeRange(0, msgs.length - 50);
+    }
+    _room!.messages = msgs;
+  }
+
+  void _mergeVoters(DataSnapshot snap) {
+    if (_room == null) return;
+    if (!snap.exists || snap.value == null) {
+      _room!.voterIds = {};
+      return;
+    }
+    final map = snap.value as Map<dynamic, dynamic>;
+    _room!.voterIds = map.keys.map((k) => k.toString()).toSet();
+    _checkVoteThreshold();
+    notifyListeners();
+  }
+
+  void _maybeSyncPlayback() {
+    if (_room == null || _room!.queue.isEmpty) return;
+    final head = _room!.queue.first;
+    if (_lastPlayedQueueHeadId == head.id) return;
+    _lastPlayedQueueHeadId = head.id;
+    if (head.song.uri == null || head.song.uri!.isEmpty) return;
+
+    _room!.status = RoomStatus.active;
+    _audio?.playSong(
+      head.song,
+      _room!.queue.map((q) => q.song).toList(),
+    );
+    _cancelIdleTimer();
+  }
+
+  // ── Create / join / leave ─────────────────────────────────────────────────
+
   Future<Room> createRoom({
     String? name,
     required RoomSettings settings,
   }) async {
-    final code     = AppUtils.generateRoomCode();
+    if (!_isAuthed || _uid == null) {
+      throw StateError('Sign in to create a room');
+    }
+
+    if (inRoom) await leaveRoom();
+
+    final code = await _allocateRoomCode();
     final roomName = (name != null && name.trim().isNotEmpty)
         ? name.trim()
-        : "$_localUserName's Room";
+        : "${_auth!.displayName}'s Room";
 
-    final localParticipant = RoomParticipant(
-      id:         _localUserId,
-      username:   _localUserName,
-      colorIndex: 0,
-      isActive:   true,
-    );
+    final colorIndex =
+        _uid!.hashCode.abs() % AppColors.participantColors.length;
+
+    final roomData = {
+      'code': code,
+      'name': roomName,
+      'hostId': _uid,
+      'status': 'idle',
+      'settings': {
+        'everyoneCanAdd': settings.everyoneCanAdd,
+        'majoritySkip': settings.majoritySkip,
+      },
+      'activeVoteType': null,
+      'voteCountdown': null,
+      'createdAt': ServerValue.timestamp,
+    };
+
+    final ref = FirebaseDatabase.instance.ref('rooms/$code');
+    await ref.set(roomData);
+
+    await ref.child('participants/$_uid').set({
+      'username': _auth!.displayName,
+      'colorIndex': colorIndex,
+      'isActive': true,
+      'joinedAt': ServerValue.timestamp,
+    });
+    await ref.child('participants/$_uid').onDisconnect().remove();
 
     _room = Room(
-      code:         code,
-      name:         roomName,
-      hostId:       _localUserId,
-      settings:     settings,
-      participants: [localParticipant],
-      status:       RoomStatus.idle,
+      code: code,
+      name: roomName,
+      hostId: _uid!,
+      settings: settings,
+      participants: [
+        RoomParticipant(
+          id: _uid!,
+          username: _auth!.displayName,
+          colorIndex: colorIndex,
+          isActive: true,
+        ),
+      ],
     );
 
+    _lastPlayedQueueHeadId = null;
+    _attachRoomListeners(code);
     await _saveHistory(code);
     await _incrementRoomsCreated();
-
-    // Start simulated participants joining after a short delay.
-    _startSimulation();
     _startIdleTimer();
-
     notifyListeners();
     return _room!;
   }
 
-  // ── Room joining ──────────────────────────────────────────────────────────
-
-  /// Joins an existing room by code.
-  /// In simulation, creates a new room with the given code so joining works.
   Future<bool> joinRoom(String code) async {
+    _joinError = null;
+    if (!_isAuthed || _uid == null) {
+      _joinError = 'Sign in to join a room';
+      notifyListeners();
+      return false;
+    }
+
     final trimmed = code.trim().toUpperCase();
-    if (trimmed.length != AppConstants.roomCodeLength) return false;
+    if (trimmed.length != AppConstants.roomCodeLength) {
+      _joinError = 'Enter a 6-character code';
+      notifyListeners();
+      return false;
+    }
 
-    final localParticipant = RoomParticipant(
-      id:         _localUserId,
-      username:   _localUserName,
-      colorIndex: 0,
-      isActive:   true,
-    );
+    if (_room?.code == trimmed) {
+      if (_roomSubs.isEmpty) _attachRoomListeners(trimmed);
+      return true;
+    }
 
+    if (inRoom) await leaveRoom();
+
+    final ref = FirebaseDatabase.instance.ref('rooms/$trimmed');
+    final snap = await ref.get();
+    if (!snap.exists || snap.value == null) {
+      _joinError = 'Room not found. Check the code.';
+      notifyListeners();
+      return false;
+    }
+
+    final data = snap.value as Map<dynamic, dynamic>;
+    final participants = data['participants'];
+    if (participants is Map && participants.length >= AppConstants.roomMaxParticipants) {
+      _joinError = 'Room is full';
+      notifyListeners();
+      return false;
+    }
+
+    final colorIndex =
+        _uid!.hashCode.abs() % AppColors.participantColors.length;
+
+    await ref.child('participants/$_uid').set({
+      'username': _auth!.displayName,
+      'colorIndex': colorIndex,
+      'isActive': true,
+      'joinedAt': ServerValue.timestamp,
+    });
+    await ref.child('participants/$_uid').onDisconnect().remove();
+
+    await ref.child('messages').push().set({
+      'participantId': _uid,
+      'participantName': _auth!.displayName,
+      'text': '${_auth!.displayName} joined the room',
+      'timestamp': ServerValue.timestamp,
+    });
+
+    final settings = data['settings'];
     _room = Room(
-      code:         trimmed,
-      name:         'Room $trimmed',
-      hostId:       _localUserId,
-      settings:     const RoomSettings(),
-      participants: [localParticipant],
-      status:       RoomStatus.idle,
+      code: trimmed,
+      name: data['name']?.toString() ?? 'Room $trimmed',
+      hostId: data['hostId']?.toString() ?? '',
+      settings: settings is Map
+          ? RoomSettings(
+              everyoneCanAdd: settings['everyoneCanAdd'] as bool? ?? true,
+              majoritySkip: settings['majoritySkip'] as bool? ?? true,
+            )
+          : const RoomSettings(),
+      status: RoomRtdbCodec.statusFromString(data['status']?.toString()),
     );
 
+    _lastPlayedQueueHeadId = null;
+    _attachRoomListeners(trimmed);
     await _saveHistory(trimmed);
-    _startSimulation();
     _startIdleTimer();
-
     notifyListeners();
     return true;
   }
 
-  // ── Leave / close room ────────────────────────────────────────────────────
-
-  void leaveRoom() {
+  Future<void> leaveRoom() async {
     _cancelAllTimers();
+    _cancelRoomSubs();
+
+    if (_room != null && _uid != null) {
+      final code = _room!.code;
+      final ref = FirebaseDatabase.instance.ref('rooms/$code');
+      await ref.child('participants/$_uid').remove();
+
+      final snap = await ref.child('participants').get();
+      final empty = !snap.exists ||
+          snap.value == null ||
+          (snap.value as Map).isEmpty;
+      if (empty) {
+        await ref.remove();
+      }
+    }
+
     _audio?.stop();
     _reactions = [];
-    _room      = null;
+    _room = null;
+    _lastPlayedQueueHeadId = null;
     notifyListeners();
   }
 
-  // ── Queue management ──────────────────────────────────────────────────────
+  bool isHost(String userId) =>
+      _room != null && _room!.hostId == userId;
 
-  /// Adds a song to the queue. Returns false if permissions deny it.
-  bool addSong(SongItem song) {
-    if (_room == null) return false;
-    if (!_room!.settings.everyoneCanAdd && !_room!.isHost) return false;
+  // ── Queue ─────────────────────────────────────────────────────────────────
 
-    final item = RoomQueueItem(
-      id:          '${song.id}_${DateTime.now().millisecondsSinceEpoch}',
-      song:        song,
-      addedById:   _localUserId,
-      addedByName: _localUserName,
-    );
+  Future<bool> addSong(SongItem song) async {
+    if (_room == null || _uid == null) return false;
+    if (!_room!.settings.everyoneCanAdd && !isHost(_uid!)) {
+      return false;
+    }
 
-    _room!.queue.add(item);
+    final order = _room!.queue.length;
+    final itemId = _roomRef.child('queue').push().key!;
+    await _roomRef.child('queue/$itemId').set({
+      'order': order,
+      'song': RoomRtdbCodec.songToMap(song),
+      'addedById': _uid,
+      'addedByName': _auth?.displayName ?? 'Guest',
+      'upvotes': 0,
+      'downvotes': 0,
+    });
 
-    // If idle, start playing immediately.
     if (_room!.status == RoomStatus.idle) {
-      _room!.status = RoomStatus.active;
-      _audio?.playSong(song, _room!.queue.map((q) => q.song).toList());
+      await _roomRef.update({'status': 'active'});
     }
 
     _cancelIdleTimer();
@@ -197,126 +435,136 @@ class RoomProvider extends ChangeNotifier {
     return true;
   }
 
-  /// Host removes any queue item by its id.
-  void removeQueueItem(String itemId) {
-    if (_room == null) return;
-    _room!.queue.removeWhere((q) => q.id == itemId);
+  Future<void> removeQueueItem(String itemId) async {
+    if (_room == null || _uid == null || !isHost(_uid!)) return;
+    await _roomRef.child('queue/$itemId').remove();
     notifyListeners();
   }
 
   // ── Voting ────────────────────────────────────────────────────────────────
 
-  /// Cast a vote. [type] is skip or replay.
-  /// Auto-executes if threshold is reached.
-  void castVote(VoteType type) {
-    if (_room == null) return;
-    if (_room!.activeVoteType != null && _room!.activeVoteType != type) return;
+  Future<void> castVote(VoteType type) async {
+    if (_room == null || _uid == null) return;
+    if (_room!.activeVoteType != null && _room!.activeVoteType != type) {
+      return;
+    }
 
-    // Start a new vote if none is active.
     if (_room!.activeVoteType == null) {
-      _room!.activeVoteType = type;
-      _room!.voterIds       = {};
-      _room!.status         = RoomStatus.voting;
+      await _roomRef.update({
+        'activeVoteType': type == VoteType.skip ? 'skip' : 'replay',
+        'status': 'voting',
+        'voteCountdown': 30,
+      });
+      await _roomRef.child('voters').remove();
       _startVoteTimer();
     }
 
-    _room!.voterIds.add(_localUserId);
+    _room!.voterIds.add(_uid!);
+    await _roomRef.child('voters/$_uid').set(true);
     _checkVoteThreshold();
     notifyListeners();
   }
 
   void _checkVoteThreshold() {
-    if (_room == null) return;
-    final participantCount = _room!.participantCount;
-    if (participantCount == 0) return;
+    if (_room == null || _voteActionInProgress) return;
+    if (_room!.activeVoteType == null) return;
+    final count = _room!.participantCount;
+    if (count == 0) return;
 
-    final ratio = _room!.voterIds.length / participantCount;
+    final ratio = _room!.voterIds.length / count;
     final voteType = _room!.activeVoteType;
 
-    final skipThreshold   = AppConstants.skipVoteThreshold;
-    final replayThreshold = AppConstants.replayVoteThreshold;
-
-    if (voteType == VoteType.skip   && ratio >= skipThreshold)   _executeSkip();
-    if (voteType == VoteType.replay && ratio >= replayThreshold) _executeReplay();
+    if (voteType == VoteType.skip &&
+        ratio >= AppConstants.skipVoteThreshold) {
+      _executeSkip();
+    } else if (voteType == VoteType.replay &&
+        ratio >= AppConstants.replayVoteThreshold) {
+      _executeReplay();
+    }
   }
 
-  void _executeSkip() {
-    if (_room == null) return;
-    _clearVote();
-    if (_room!.queue.isNotEmpty) {
-      _room!.queue.removeAt(0);
+  Future<void> _executeSkip() async {
+    if (_room == null || _voteActionInProgress) return;
+    _voteActionInProgress = true;
+    try {
+      await _clearVote();
+      if (_room!.queue.isNotEmpty) {
+        final firstId = _room!.queue.first.id;
+        _room!.queue.removeAt(0);
+        _lastPlayedQueueHeadId = null;
+        await _roomRef.child('queue/$firstId').remove();
+      }
+      if (_room!.queue.isEmpty) {
+        await _roomRef.update({'status': 'idle'});
+        _startIdleTimer();
+      } else {
+        await _roomRef.update({'status': 'active'});
+        _maybeSyncPlayback();
+      }
+    } finally {
+      _voteActionInProgress = false;
+      notifyListeners();
     }
-    if (_room!.queue.isNotEmpty) {
-      final next = _room!.queue.first.song;
-      _audio?.playSong(next, _room!.queue.map((q) => q.song).toList());
-      _room!.status = RoomStatus.active;
-    } else {
-      _room!.status = RoomStatus.idle;
-      _startIdleTimer();
-    }
-    notifyListeners();
   }
 
-  void _executeReplay() {
-    if (_room == null) return;
-    _clearVote();
-    if (_room!.queue.isNotEmpty) {
-      _audio?.playSong(
-          _room!.queue.first.song,
-          _room!.queue.map((q) => q.song).toList());
+  Future<void> _executeReplay() async {
+    if (_room == null || _voteActionInProgress) return;
+    _voteActionInProgress = true;
+    try {
+      await _clearVote();
+      await _roomRef.update({'status': 'active'});
+      _maybeSyncPlayback();
+    } finally {
+      _voteActionInProgress = false;
+      notifyListeners();
     }
-    _room!.status = RoomStatus.active;
-    notifyListeners();
   }
 
-  void _clearVote() {
+  Future<void> _clearVote() async {
     _voteTimer?.cancel();
     _voteTimer = null;
-    _room?.activeVoteType = null;
-    _room?.voterIds       = {};
-    _room?.voteCountdown  = null;
-    if (_room?.status == RoomStatus.voting) {
-      _room?.status = RoomStatus.active;
-    }
+    await _roomRef.update({
+      'activeVoteType': null,
+      'voteCountdown': null,
+      'status': _room!.queue.isEmpty ? 'idle' : 'active',
+    });
+    await _roomRef.child('voters').remove();
   }
 
   void _startVoteTimer() {
     _voteTimer?.cancel();
-    _room!.voteCountdown = 30;
-    _voteTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (_room == null) { t.cancel(); return; }
-      _room!.voteCountdown = (_room!.voteCountdown ?? 1) - 1;
-      if (_room!.voteCountdown! <= 0) {
-        _clearVote();
+    _voteTimer = Timer.periodic(const Duration(seconds: 1), (t) async {
+      if (_room == null) {
+        t.cancel();
+        return;
       }
-      notifyListeners();
+      final next = (_room!.voteCountdown ?? 30) - 1;
+      if (next <= 0) {
+        t.cancel();
+        await _clearVote();
+      } else {
+        await _roomRef.update({'voteCountdown': next});
+      }
     });
   }
 
-  // ── Chat ──────────────────────────────────────────────────────────────────
+  // ── Chat & reactions ──────────────────────────────────────────────────────
 
-  void sendMessage(String text) {
-    if (_room == null || text.trim().isEmpty) return;
-    _room!.messages.add(RoomChatMessage(
-      participantId:   _localUserId,
-      participantName: _localUserName,
-      text:            text.trim(),
-      timestamp:       DateTime.now(),
-    ));
-    // Keep last 50 messages only.
-    if (_room!.messages.length > 50) {
-      _room!.messages.removeAt(0);
-    }
-    notifyListeners();
+  Future<void> sendMessage(String text) async {
+    if (_room == null || _uid == null || text.trim().isEmpty) return;
+    await _roomRef.child('messages').push().set({
+      'participantId': _uid,
+      'participantName': _auth?.displayName ?? 'Guest',
+      'text': text.trim(),
+      'timestamp': ServerValue.timestamp,
+    });
   }
-
-  // ── Emoji reactions ───────────────────────────────────────────────────────
 
   void sendReaction(String emoji) {
     if (_room == null) return;
     final reaction = EmojiReaction(
-      id:        '${emoji}_${DateTime.now().millisecondsSinceEpoch}',
-      emoji:     emoji,
+      id: '${emoji}_${DateTime.now().millisecondsSinceEpoch}',
+      emoji: emoji,
       xFraction: 0.1 + _rng.nextDouble() * 0.8,
     );
     _reactions.add(reaction);
@@ -326,97 +574,6 @@ class RoomProvider extends ChangeNotifier {
       notifyListeners();
     });
     _reactionTimers.add(timer);
-  }
-
-  // ── Simulation ────────────────────────────────────────────────────────────
-  // Drives realistic-feeling activity without a real backend.
-
-  void _startSimulation() {
-    _simTimer?.cancel();
-    // First simulated participant joins after 1.5 seconds.
-    Timer(const Duration(milliseconds: 1500), _addSimulatedParticipant);
-    // Second one joins 3 seconds after that.
-    Timer(const Duration(milliseconds: 4500), _addSimulatedParticipant);
-    // Periodic activity after that — emoji and chat messages.
-    _simTimer = Timer.periodic(const Duration(seconds: 8), (_) {
-      _simulateActivity();
-    });
-  }
-
-  void _addSimulatedParticipant() {
-    if (_room == null) return;
-    if (_room!.participants.length >= AppConstants.roomMaxParticipants) return;
-
-    final usedNames = _room!.participants.map((p) => p.username).toSet();
-    final available = _simNames.where((n) => !usedNames.contains(n)).toList();
-    if (available.isEmpty) return;
-
-    final name  = available[_rng.nextInt(available.length)];
-    final color = _room!.participants.length %
-        AppColors.participantColors.length;
-
-    final participant = RoomParticipant(
-      id:         'sim_${DateTime.now().millisecondsSinceEpoch}',
-      username:   name,
-      colorIndex: color.toInt(),
-      isActive:   true,
-    );
-
-    _room!.participants.add(participant);
-    _room!.messages.add(RoomChatMessage(
-      participantId:   participant.id,
-      participantName: participant.username,
-      text:            '${participant.username} joined the room',
-      timestamp:       DateTime.now(),
-    ));
-
-    _cancelIdleTimer();
-    notifyListeners();
-  }
-
-  void _simulateActivity() {
-    if (_room == null) return;
-    final simParticipants = _room!.participants
-        .where((p) => p.id != _localUserId)
-        .toList();
-    if (simParticipants.isEmpty) return;
-
-    final roll = _rng.nextInt(100);
-
-    if (roll < 35) {
-      // Send a random emoji reaction from a random simulated participant.
-      final emoji = _simEmojis[_rng.nextInt(_simEmojis.length)];
-      sendReaction(emoji);
-    } else if (roll < 55) {
-      // Simulated participant sends a short chat message.
-      final participant = simParticipants[_rng.nextInt(simParticipants.length)];
-      const messages = [
-        '🎵 love this track!',
-        'banger 🔥',
-        'who added this?',
-        'great pick 👌',
-        'this is a vibe',
-        'next song next song',
-      ];
-      _room!.messages.add(RoomChatMessage(
-        participantId:   participant.id,
-        participantName: participant.username,
-        text:            messages[_rng.nextInt(messages.length)],
-        timestamp:       DateTime.now(),
-      ));
-      if (_room!.messages.length > 50) _room!.messages.removeAt(0);
-      notifyListeners();
-    } else if (roll < 65) {
-      // Toggle a participant's active status.
-      final participant = simParticipants[_rng.nextInt(simParticipants.length)];
-      final idx = _room!.participants
-          .indexWhere((p) => p.id == participant.id);
-      if (idx >= 0) {
-        _room!.participants[idx] =
-            participant.copyWith(isActive: !participant.isActive);
-        notifyListeners();
-      }
-    }
   }
 
   // ── Timers ────────────────────────────────────────────────────────────────
@@ -437,26 +594,27 @@ class RoomProvider extends ChangeNotifier {
 
   void _cancelAllTimers() {
     _idleTimer?.cancel();
-    _simTimer?.cancel();
     _voteTimer?.cancel();
-    _reactionTimer?.cancel();
-    
     for (final t in _reactionTimers) {
       t.cancel();
     }
     _reactionTimers.clear();
-
-    _idleTimer      = null;
-    _simTimer       = null;
-    _voteTimer      = null;
-    _reactionTimer  = null;
+    _idleTimer = null;
+    _voteTimer = null;
   }
-
-  // ── Dispose ───────────────────────────────────────────────────────────────
 
   @override
   void dispose() {
     _cancelAllTimers();
+    _cancelRoomSubs();
+    final code = _room?.code;
+    final uid = _uid;
+    if (code != null && uid != null) {
+      FirebaseDatabase.instance
+          .ref('rooms/$code/participants/$uid')
+          .remove();
+    }
+    _room = null;
     super.dispose();
   }
 }

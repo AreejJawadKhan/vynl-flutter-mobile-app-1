@@ -18,6 +18,7 @@ import 'features/library/screens/playlist_screen.dart';
 import 'features/profile/providers/profile_provider.dart';
 import 'features/now_playing/now_playing_screen.dart';
 import 'features/auth/providers/auth_provider.dart' as auth_provider;
+import 'core/auth/auth_guard.dart';
 import 'features/auth/auth_gate.dart';
 import 'features/social/providers/social_provider.dart';
 import 'firebase_options.dart';
@@ -25,7 +26,11 @@ import 'firebase_options.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await dotenv.load(fileName: '.env');
+  try {
+    await dotenv.load(fileName: '.env');
+  } catch (e) {
+    debugPrint('[Main] .env not loaded (API keys unavailable): $e');
+  }
 
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
@@ -66,11 +71,20 @@ class VynlApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => ThemeProvider()),
         ChangeNotifierProvider(create: (_) => auth_provider.AuthProvider()),
         ChangeNotifierProvider(create: (_) => LibraryProvider()),
-        ChangeNotifierProxyProvider<LibraryProvider, AudioProvider>(
+        ChangeNotifierProxyProvider<auth_provider.AuthProvider, SocialProvider>(
+          create: (_) => SocialProvider(),
+          update: (_, auth, social) {
+            social!.updateAuth(auth);
+            return social;
+          },
+        ),
+        ChangeNotifierProxyProvider2<LibraryProvider, SocialProvider,
+            AudioProvider>(
           create: (_) => AudioProvider(),
-          update: (_, library, audio) {
-            audio!.updateLibrary(library);
-            return audio;
+          update: (_, library, social, audio) {
+            audio?.updateLibrary(library);
+            audio?.updateSocial(social);
+            return audio!;
           },
         ),
         ChangeNotifierProxyProvider2<AudioProvider, LibraryProvider,
@@ -88,18 +102,14 @@ class VynlApp extends StatelessWidget {
             return playlist;
           },
         ),
-        ChangeNotifierProxyProvider<AudioProvider, RoomProvider>(
+        ChangeNotifierProxyProvider2<AudioProvider, auth_provider.AuthProvider,
+            RoomProvider>(
           create: (_) => RoomProvider(),
-          update: (_, audio, room) {
-            room!.updateAudio(audio);
-            return room;
-          },
-        ),
-        ChangeNotifierProxyProvider<auth_provider.AuthProvider, SocialProvider>(
-          create: (_) => SocialProvider(),
-          update: (_, auth, social) {
-            social!.updateAuth(auth);
-            return social;
+          update: (_, audio, auth, room) {
+            final r = room!;
+            r.updateAudio(audio);
+            r.updateAuth(auth);
+            return r;
           },
         ),
         ChangeNotifierProvider(create: (_) => ProfileProvider()),
@@ -119,9 +129,12 @@ class VynlApp extends StatelessWidget {
             // ── KEY FIX: use home OR routes['/']. Never both. ──────────────
             home: const AuthGate(),
             routes: {
-              // AppRoutes.main ('/')  ← REMOVED, home handles this
-              AppRoutes.nowPlaying: (_) => const NowPlayingScreen(),
-              AppRoutes.playlists:  (_) => const PlaylistScreen(),
+              AppRoutes.nowPlaying: (_) => const AuthRequired(
+                    child: NowPlayingScreen(),
+                  ),
+              AppRoutes.playlists: (_) => const AuthRequired(
+                    child: PlaylistScreen(),
+                  ),
             },
           );
         },

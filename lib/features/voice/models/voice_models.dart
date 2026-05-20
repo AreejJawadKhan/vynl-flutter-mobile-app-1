@@ -1,7 +1,7 @@
 /// All data models and keyword maps for the AI voice search feature.
 ///
-/// The "AI" here is keyword matching — no external API, no ML model.
-/// We take the speech transcript and compare it against these keyword lists.
+/// Voice uses on-device STT plus optional Gemini intent parsing, with local
+/// keyword maps as fallback when the API is unavailable.
 
 // ── Voice state ───────────────────────────────────────────────────────────────
 

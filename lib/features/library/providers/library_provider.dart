@@ -6,8 +6,10 @@ import 'package:flutter/foundation.dart';
 import 'package:on_audio_query/on_audio_query.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../core/constants/env.dart';
 import '../../../core/constants/prefs_keys.dart';
 import '../../../core/utils/permission_helper.dart';
+import '../../../services/analytics_service.dart';
 import '../../../services/music_enrichment_service.dart';
 import '../models/song_model.dart';
 
@@ -20,6 +22,14 @@ class LibraryProvider extends ChangeNotifier {
   bool     _isLoading   = false;
   bool     _isEnriching = false;
   String?  _errorMessage;
+
+  static const Duration _firebaseLoadTimeout = Duration(seconds: 15);
+  static const int _maxConcurrentVisibleEnrich = 4;
+
+  Map<String, Map<String, String>> _metaCache = {};
+  final Set<String> _enrichedKeys = {};
+  final Set<String> _inFlightKeys = {};
+  int _activeVisibleEnrich = 0;
   String   _searchQuery = '';
   SortMode _sortMode    = SortMode.titleAZ;
 
@@ -27,7 +37,8 @@ class LibraryProvider extends ChangeNotifier {
   List<String> _recentIds = [];
 
   bool     get isLoading    => _isLoading;
-  bool     get isEnriching  => _isEnriching;
+  bool     get isEnriching  => _isEnriching && _activeVisibleEnrich > 0;
+  int get activeVisibleEnrich => _activeVisibleEnrich;
   String?  get errorMessage => _errorMessage;
   String   get searchQuery  => _searchQuery;
   SortMode get sortMode     => _sortMode;
@@ -133,8 +144,10 @@ class LibraryProvider extends ChangeNotifier {
       _isLoading = false;
       notifyListeners();
 
-      // Enrich in background — don't block UI
-      _enrichSongsInBackground();
+      await AnalyticsService.logLibraryScan(songCount: _allSongs.length);
+
+      // Apply shared/local cache only — Last.fm runs for visible rows
+      await _hydrateFromCache();
     } catch (e) {
       _errorMessage =
       'Could not load music library. Check storage permissions.';
@@ -144,77 +157,126 @@ class LibraryProvider extends ChangeNotifier {
     }
   }
 
-  // ── Enrichment ──────────────────────────────────────────────────────────
+  // ── Enrichment (visible-first) ───────────────────────────────────────────
 
-  Future<void> _enrichSongsInBackground() async {
+  Future<void> _hydrateFromCache() async {
     if (_allSongs.isEmpty) return;
+    _metaCache = await _loadEnrichmentFromFirebase();
+
+    var applied = 0;
+    for (int i = 0; i < _allSongs.length; i++) {
+      final song = _allSongs[i];
+      final key  = _metaKey(song.artist, song.title);
+      final cached = _metaCache[key];
+      if (cached != null) {
+        _applyCacheToIndex(i, song, cached);
+        _enrichedKeys.add(key);
+        applied++;
+      }
+    }
+    debugPrint('[Library] Applied $applied cached metadata entries');
+    notifyListeners();
+  }
+
+  void _applyCacheToIndex(
+    int index,
+    SongItem song,
+    Map<String, String> cached,
+  ) {
+    final artUrl = cached['albumArtUrl'];
+    final genre  = cached['genre'];
+    _allSongs[index] = song.copyWithEnrichment(
+      genre: (genre != null && genre.isNotEmpty && genre != 'Unknown')
+          ? genre
+          : null,
+      albumArtUrl:
+          (artUrl != null && artUrl.isNotEmpty) ? artUrl : null,
+    );
+  }
+
+  bool _needsNetworkEnrichment(SongItem song) {
+    final key = _metaKey(song.artist, song.title);
+    if (_enrichedKeys.contains(key) || _inFlightKeys.contains(key)) {
+      return false;
+    }
+    if (_metaCache.containsKey(key)) return false;
+    final missingArt = song.albumArtUrl == null || song.albumArtUrl!.isEmpty;
+    final missingGenre = song.genre.isEmpty || song.genre == 'Unknown';
+    return missingArt || missingGenre;
+  }
+
+  /// Called from list tiles when a row is built — fetches Last.fm only if needed.
+  void enrichSongIfNeeded(SongItem song) {
+    if (!_needsNetworkEnrichment(song)) return;
+    if (Env.lastfmKey.isEmpty) return;
+    if (_activeVisibleEnrich >= _maxConcurrentVisibleEnrich) return;
+
+    final key = _metaKey(song.artist, song.title);
+    _inFlightKeys.add(key);
+    _activeVisibleEnrich++;
     _isEnriching = true;
     notifyListeners();
 
-    // 1. Load from Firebase first (shared across all devices/logins)
-    final cache = await _loadEnrichmentFromFirebase();
-
-    // 2. Apply cached values immediately so UI shows art right away
-    bool anyCached = false;
-    for (int i = 0; i < _allSongs.length; i++) {
-      final song   = _allSongs[i];
-      final key    = _metaKey(song.artist, song.title);
-      final cached = cache[key];
-      if (cached != null) {
-        final artUrl = cached['albumArtUrl'];
-        final genre  = cached['genre'];
-        _allSongs[i] = song.copyWithEnrichment(
-          genre: (genre != null && genre.isNotEmpty &&
-              genre != 'Unknown')
-              ? genre
-              : null,
-          albumArtUrl:
-          (artUrl != null && artUrl.isNotEmpty) ? artUrl : null,
-        );
-        anyCached = true;
+    _enrichSong(song).then((_) async {
+      final idx = _allSongs.indexWhere((s) => s.id == song.id);
+      if (idx < 0) return;
+      final updated = _allSongs[idx];
+      _metaCache[key] = {
+        'genre': updated.genre,
+        'albumArtUrl': updated.albumArtUrl ?? '',
+      };
+      await _persistSingleSongMeta(updated);
+    }).catchError((e) {
+      debugPrint('[Library] Visible enrich error: $e');
+    }).whenComplete(() {
+      // Mark attempted so list rebuilds do not re-fetch forever on failure.
+      _enrichedKeys.add(key);
+      _inFlightKeys.remove(key);
+      _activeVisibleEnrich =
+          (_activeVisibleEnrich - 1).clamp(0, _maxConcurrentVisibleEnrich);
+      if (_activeVisibleEnrich == 0) {
+        _isEnriching = false;
       }
+      notifyListeners();
+    });
+  }
+
+  /// Prefetch a scroll window (e.g. on scroll end).
+  void enrichVisibleRange(int start, int end, List<SongItem> songs) {
+    if (songs.isEmpty) return;
+    final lo = start.clamp(0, songs.length - 1);
+    final hi = end.clamp(lo, songs.length - 1);
+    for (int i = lo; i <= hi; i++) {
+      enrichSongIfNeeded(songs[i]);
     }
-    if (anyCached) notifyListeners();
+  }
 
-    // 3. Only call Last.fm for songs not in cache
-    final needsEnrichment = _allSongs.where((s) {
-      final key = _metaKey(s.artist, s.title);
-      return !cache.containsKey(key);
-    }).toList();
-
-    debugPrint(
-        '[Library] ${needsEnrichment.length} songs need Last.fm enrichment');
-
-    if (needsEnrichment.isNotEmpty) {
-      const batchSize = 5;
-      for (int i = 0; i < needsEnrichment.length; i += batchSize) {
-        final end =
-        (i + batchSize).clamp(0, needsEnrichment.length);
-        final batch = needsEnrichment.sublist(i, end);
-
-        await Future.wait(batch.map(_enrichSong));
-
-        if (end < needsEnrichment.length) {
-          await Future.delayed(const Duration(milliseconds: 250));
-        }
-        notifyListeners();
-      }
-
-      // 4. Save newly fetched data to Firebase + local
-      await _saveEnrichmentToFirebase();
-      await _saveLocalCache();
+  Future<void> _persistSingleSongMeta(SongItem song) async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    if (song.albumArtUrl == null &&
+        (song.genre.isEmpty || song.genre == 'Unknown')) {
+      return;
     }
-
-    _isEnriching = false;
-    notifyListeners();
-    debugPrint('[Library] Enrichment complete.');
+    final key = _metaKey(song.artist, song.title);
+    try {
+      await FirebaseDatabase.instance.ref('songMeta/$key').update({
+        'genre': song.genre,
+        'albumArtUrl': song.albumArtUrl ?? '',
+        'artist': song.artist,
+        'title': song.title,
+      });
+    } catch (e) {
+      debugPrint('[Library] Single meta save error: $e');
+    }
+    await _saveLocalCache();
   }
 
   Future<void> _enrichSong(SongItem song) async {
     try {
       final info =
       await _enrichment.getTrackInfo(song.artist, song.title);
-      final idx  = _allSongs.indexOf(song);
+      final idx  = _allSongs.indexWhere((s) => s.id == song.id);
       if (idx < 0) return;
 
       if (info == null) {
@@ -260,8 +322,10 @@ class LibraryProvider extends ChangeNotifier {
     }
 
     try {
-      final snapshot =
-      await FirebaseDatabase.instance.ref('songMeta').get();
+      final snapshot = await FirebaseDatabase.instance
+          .ref('songMeta')
+          .get()
+          .timeout(_firebaseLoadTimeout);
 
       if (!snapshot.exists || snapshot.value == null) {
         return localCache;
@@ -295,37 +359,6 @@ class LibraryProvider extends ChangeNotifier {
       debugPrint(
           '[Library] Firebase songMeta load error: $e — using local cache');
       return localCache;
-    }
-  }
-
-  Future<void> _saveEnrichmentToFirebase() async {
-    final uid = FirebaseAuth.instance.currentUser?.uid;
-    if (uid == null) return;
-
-    try {
-      final updates = <String, dynamic>{};
-
-      for (final song in _allSongs) {
-        // Only save songs that have real enrichment
-        if (song.albumArtUrl != null ||
-            (song.genre != 'Unknown' && song.genre.isNotEmpty)) {
-          final key = _metaKey(song.artist, song.title);
-          updates['$key/genre']       = song.genre;
-          updates['$key/albumArtUrl'] = song.albumArtUrl ?? '';
-          updates['$key/artist']      = song.artist;
-          updates['$key/title']       = song.title;
-        }
-      }
-
-      if (updates.isNotEmpty) {
-        await FirebaseDatabase.instance
-            .ref('songMeta')
-            .update(updates);
-        debugPrint(
-            '[Library] Saved ${updates.length ~/ 4} songs to Firebase songMeta');
-      }
-    } catch (e) {
-      debugPrint('[Library] Firebase save error: $e');
     }
   }
 

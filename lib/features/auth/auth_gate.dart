@@ -10,6 +10,15 @@ class AuthGate extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<ap.AuthProvider>();
-    return auth.isAuthenticated ? const MainScaffold() : const AuthScreen();
+
+    if (!auth.isReady) {
+      return const Scaffold(
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    return auth.isAuthenticated
+        ? const MainScaffold()
+        : const AuthScreen();
   }
 }

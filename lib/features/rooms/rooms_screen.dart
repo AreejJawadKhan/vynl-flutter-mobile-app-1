@@ -85,7 +85,15 @@ class _RoomsScreenState extends State<RoomsScreen> {
                 _joinCtrl.clear();
                 await _openRoom(context);
               } else {
-                setState(() => _joinError = true);
+                setState(() {
+                  _joinError = true;
+                });
+                final msg = rooms.joinError;
+                if (msg != null && context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(msg)),
+                  );
+                }
               }
             },
           ),
@@ -136,12 +144,22 @@ class _CreateRoomCardState extends State<_CreateRoomCard> {
       everyoneCanAdd: _everyoneCanAdd,
       majoritySkip:   _majoritySkip,
     );
-    await rooms.createRoom(
-      name:     _nameCtrl.text,
-      settings: settings,
-    );
-    setState(() => _loading = false);
-    if (context.mounted) await widget.onCreated(context);
+    try {
+      await rooms.createRoom(
+        name:     _nameCtrl.text,
+        settings: settings,
+      );
+      if (!mounted) return;
+      await widget.onCreated(context);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not create room: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   @override

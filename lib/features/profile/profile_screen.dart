@@ -592,6 +592,10 @@ class _SettingsCardState extends State<_SettingsCard> {
 
           const Divider(height: AppConstants.spaceL),
 
+          _EmailVerificationRow(),
+
+          const Divider(height: AppConstants.spaceL),
+
           // ── App version / about ──────────────────────────────────────
           _SettingRow(
             icon:     Icons.info_outline_rounded,
@@ -614,6 +618,36 @@ class _SettingsCardState extends State<_SettingsCard> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _EmailVerificationRow extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final auth = context.watch<ap.AuthProvider>();
+    if (auth.email.isEmpty) return const SizedBox.shrink();
+
+    final verified = auth.isEmailVerified;
+    return _SettingRow(
+      icon: Icons.mark_email_read_outlined,
+      label: 'Email verification',
+      subtitle: verified ? 'Verified' : 'Not verified — check your inbox',
+      trailing: verified
+          ? Icon(Icons.check_circle_rounded, color: AppColors.sage, size: 24)
+          : TextButton(
+              onPressed: () async {
+                await auth.sendEmailVerification();
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Verification email sent.'),
+                    ),
+                  );
+                }
+              },
+              child: const Text('Resend'),
+            ),
     );
   }
 }

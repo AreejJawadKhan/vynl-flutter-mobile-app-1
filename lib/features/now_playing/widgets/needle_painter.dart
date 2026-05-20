@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../../../../core/constants/app_colors.dart';
 
@@ -31,7 +30,6 @@ class NeedlePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final pivotX  = size.width  * _pivotXFraction;
     final pivotY  = size.height * _pivotYFraction;
-    final pivot   = Offset(pivotX, pivotY);
     final armLen  = size.width  * _armLengthFraction;
 
     canvas.save();

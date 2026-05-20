@@ -3,8 +3,15 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 
+import '../../../services/analytics_service.dart';
+
 class AuthProvider extends ChangeNotifier {
   final FirebaseAuth _auth = FirebaseAuth.instance;
+
+  bool _isReady = false;
+
+  /// True after the first [authStateChanges] event (session restore finished).
+  bool get isReady => _isReady;
 
   User? get currentUser => _auth.currentUser;
   bool get isAuthenticated => currentUser != null;
@@ -12,10 +19,22 @@ class AuthProvider extends ChangeNotifier {
   String get displayName => currentUser?.displayName ?? 'Music Fan';
   String get email => currentUser?.email ?? '';
   String? get photoUrl => currentUser?.photoURL;
+  bool get isEmailVerified => currentUser?.emailVerified ?? false;
 
   AuthProvider() {
-    _auth.authStateChanges().listen((_) => notifyListeners());
+    _auth.authStateChanges().listen((user) {
+      _isReady = true;
+      AnalyticsService.setUser(user?.uid);
+      notifyListeners();
+    });
   }
+
+  static bool isValidEmail(String email) {
+    return RegExp(r'^[^@]+@[^@]+\.[^@]+$').hasMatch(email.trim());
+  }
+
+  static bool isValidPassword(String password) =>
+      password.length >= 6;
 
   Future<UserCredential?> signInWithGoogle() async {
     try {
@@ -40,7 +59,8 @@ class AuthProvider extends ChangeNotifier {
       );
 
       final result = await _auth.signInWithCredential(credential);
-      await _createUserProfile(result.user!);
+      await _ensureUserProfile(result.user!);
+      await AnalyticsService.logLogin(method: 'google');
       return result;
     } catch (e) {
       debugPrint('[AuthProvider] Google sign-in error: $e');
@@ -50,9 +70,20 @@ class AuthProvider extends ChangeNotifier {
 
   Future<UserCredential?> signInWithEmail(
       String email, String password) async {
+    if (!isValidEmail(email)) {
+      throw FirebaseAuthException(code: 'invalid-email');
+    }
+    if (!isValidPassword(password)) {
+      throw FirebaseAuthException(code: 'weak-password');
+    }
     try {
-      return await _auth.signInWithEmailAndPassword(
-          email: email, password: password);
+      final result = await _auth.signInWithEmailAndPassword(
+          email: email.trim(), password: password);
+      if (result.user != null) {
+        await _ensureUserProfile(result.user!);
+      }
+      await AnalyticsService.logLogin(method: 'email');
+      return result;
     } on FirebaseAuthException catch (e) {
       debugPrint('[AuthProvider] Email sign-in error: ${e.code}');
       rethrow;
@@ -61,11 +92,24 @@ class AuthProvider extends ChangeNotifier {
 
   Future<UserCredential?> registerWithEmail(
       String email, String password, String displayName) async {
+    if (!isValidEmail(email)) {
+      throw FirebaseAuthException(code: 'invalid-email');
+    }
+    if (!isValidPassword(password)) {
+      throw FirebaseAuthException(code: 'weak-password');
+    }
+    final name = displayName.trim();
+    if (name.isEmpty) {
+      throw FirebaseAuthException(code: 'invalid-display-name');
+    }
     try {
       final result = await _auth.createUserWithEmailAndPassword(
-          email: email, password: password);
-      await result.user!.updateDisplayName(displayName);
-      await _createUserProfile(result.user!);
+          email: email.trim(), password: password);
+      await result.user!.updateDisplayName(name);
+      await result.user!.reload();
+      await _ensureUserProfile(_auth.currentUser!);
+      await _auth.currentUser?.sendEmailVerification();
+      await AnalyticsService.logSignUp(method: 'email');
       return result;
     } on FirebaseAuthException catch (e) {
       debugPrint('[AuthProvider] Register error: ${e.code}');
@@ -73,7 +117,28 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  Future<void> sendPasswordResetEmail(String email) async {
+    if (!isValidEmail(email)) {
+      throw FirebaseAuthException(code: 'invalid-email');
+    }
+    await _auth.sendPasswordResetEmail(email: email.trim());
+  }
+
+  Future<void> sendEmailVerification() async {
+    final user = currentUser;
+    if (user == null) return;
+    await user.sendEmailVerification();
+    await user.reload();
+    notifyListeners();
+  }
+
+  Future<void> reloadUser() async {
+    await currentUser?.reload();
+    notifyListeners();
+  }
+
   Future<void> signOut() async {
+    await AnalyticsService.setUser(null);
     try {
       await GoogleSignIn.instance.signOut();
     } catch (_) {}
@@ -81,7 +146,7 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _createUserProfile(User user) async {
+  Future<void> _ensureUserProfile(User user) async {
     final ref = FirebaseDatabase.instance.ref('users/${user.uid}');
     final snapshot = await ref.get();
     if (!snapshot.exists) {

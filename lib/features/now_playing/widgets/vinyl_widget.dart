@@ -258,7 +258,8 @@ class _VinylWidgetState extends State<VinylWidget>
         if (details.primaryVelocity! < -200) _onSwipeLeft();
         if (details.primaryVelocity! >  200) _onSwipeRight();
       },
-      child: SizedBox(
+      child: RepaintBoundary(
+        child: SizedBox(
         width:  canvasWidth,
         height: canvasHeight,
         child: Stack(
@@ -287,6 +288,7 @@ class _VinylWidgetState extends State<VinylWidget>
 
           ],
         ),
+      ),
       ),
     );
   }

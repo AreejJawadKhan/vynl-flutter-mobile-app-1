@@ -2,10 +2,12 @@ import 'dart:async';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:flutter/foundation.dart';
 import '../../auth/providers/auth_provider.dart' as ap;
+import '../../../services/analytics_service.dart';
 import '../models/social_models.dart';
 
 class SocialProvider extends ChangeNotifier {
   ap.AuthProvider? _auth;
+  String? _activeUid;
   StreamSubscription? _feedSub;
 
   List<NowPlayingEntry> _feed = [];
@@ -20,12 +22,32 @@ class SocialProvider extends ChangeNotifier {
   void updateAuth(ap.AuthProvider auth) {
     _auth = auth;
     if (auth.isAuthenticated) {
+      _activeUid = auth.uid;
       _startListeningFeed();
     } else {
       _feedSub?.cancel();
       _feed = [];
+      final uid = _activeUid;
+      _activeUid = null;
+      if (uid != null && uid.isNotEmpty) {
+        _removeNowPlayingEntry(uid);
+      }
       notifyListeners();
     }
+  }
+
+  Future<void> _removeNowPlayingEntry(String uid) async {
+    try {
+      await FirebaseDatabase.instance.ref('nowPlaying/$uid').remove();
+    } catch (e) {
+      debugPrint('[SocialProvider] clear nowPlaying on sign-out: $e');
+    }
+  }
+
+  /// Re-subscribes to the now-playing feed (e.g. pull-to-refresh).
+  Future<void> refreshFeed() async {
+    if (_auth == null || !_auth!.isAuthenticated) return;
+    _startListeningFeed();
   }
 
   void _startListeningFeed() {
@@ -116,31 +138,7 @@ class SocialProvider extends ChangeNotifier {
         'hour':      DateTime.now().hour,
         'timestamp': ServerValue.timestamp,
       });
-
-      // Keep only last 200 entries to avoid unbounded growth
-      final snapshot = await FirebaseDatabase.instance
-          .ref('users/${_auth!.uid}/listeningHistory')
-          .orderByChild('timestamp')
-          .get();
-      if (snapshot.exists && snapshot.value != null) {
-        final map = snapshot.value as Map<dynamic, dynamic>;
-        if (map.length > 200) {
-          // Remove oldest entries
-          final sorted = map.entries.toList()
-            ..sort((a, b) {
-              final ta = (a.value as Map)['timestamp'] as int? ?? 0;
-              final tb = (b.value as Map)['timestamp'] as int? ?? 0;
-              return ta.compareTo(tb);
-            });
-          final toDelete = sorted.take(map.length - 200);
-          for (final entry in toDelete) {
-            await FirebaseDatabase.instance
-                .ref(
-                'users/${_auth!.uid}/listeningHistory/${entry.key}')
-                .remove();
-          }
-        }
-      }
+      // History cap enforced by Cloud Function `trimListeningHistory`
     } catch (e) {
       debugPrint('[SocialProvider] recordHistory error: $e');
     }
@@ -195,6 +193,11 @@ class SocialProvider extends ChangeNotifier {
         theirHistory: theirHistory,
       );
 
+      await AnalyticsService.logBlendCalculated(
+        compatibilityPct: _blend!.compatibilityPct,
+        noHistoryYet: _blend!.noHistoryYet,
+      );
+
       return _blend;
     } catch (e) {
       debugPrint('[SocialProvider] Blend error: $e');
@@ -234,17 +237,17 @@ class SocialProvider extends ChangeNotifier {
     required List<HistoryEntry> myHistory,
     required List<HistoryEntry> theirHistory,
   }) {
-    // No history yet on either side
+    // No history yet on either side — placeholder until both users play songs
     if (myHistory.isEmpty && theirHistory.isEmpty) {
       return BlendResult(
         user1Uid:         myUid,
         user1Name:        myName,
         user2Uid:         theirUid,
         user2Name:        theirName,
-        compatibilityPct: 42,
+        compatibilityPct: 0,
         sharedGenres:     [],
         sharedArtists:    [],
-        label:            'Just Getting Started 🎵',
+        label:            'Play songs to unlock your blend 🎵',
         noHistoryYet:     true,
       );
     }

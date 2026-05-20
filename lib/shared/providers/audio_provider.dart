@@ -1,4 +1,3 @@
-import 'package:firebase_analytics/firebase_analytics.dart';
 import 'dart:math';
 
 import 'package:audio_session/audio_session.dart';
@@ -10,6 +9,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../features/library/models/song_model.dart';
 import '../../features/library/providers/library_provider.dart';
 import '../../core/constants/prefs_keys.dart';
+import '../../core/utils/media_art_helper.dart';
+import '../../services/analytics_service.dart';
 
 /// Repeat mode for the queue.
 enum RepeatMode { off, one, all }
@@ -191,6 +192,7 @@ class AudioProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
+      final artUri = await MediaArtHelper.uriForSong(song);
       final source = AudioSource.uri(
         Uri.parse(song.uri!),
         tag: MediaItem(
@@ -199,6 +201,7 @@ class AudioProvider extends ChangeNotifier {
           artist:  song.artist,
           album:   song.album,
           duration: Duration(milliseconds: song.duration),
+          artUri: artUri,
         ),
       );
       await _player.setAudioSource(source);
@@ -208,7 +211,7 @@ class AudioProvider extends ChangeNotifier {
       _social?.broadcastNowPlaying(
         title: song.title,
         artist: song.artist,
-        albumArtUrl: null, // enriched separately
+        albumArtUrl: song.albumArtUrl,
         genre: song.genre,
       );
 
@@ -219,14 +222,11 @@ class AudioProvider extends ChangeNotifier {
         genre: song.genre,
       );
 
-      // Firebase Analytics
-      await FirebaseAnalytics.instance.logEvent(
-        name: 'song_played',
-        parameters: {
-          'song_title': song.title,
-          'artist': song.artist,
-          'genre': song.genre,
-        },
+      await AnalyticsService.logSongPlayed(
+        title: song.title,
+        artist: song.artist,
+        genre: song.genre,
+        hasAlbumArt: song.albumArtUrl != null && song.albumArtUrl!.isNotEmpty,
       );
     } catch (e) {
       debugPrint('[AudioProvider] load error for ${song.title}: $e');

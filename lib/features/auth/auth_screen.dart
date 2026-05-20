@@ -69,6 +69,31 @@ class _AuthScreenState extends State<AuthScreen>
     }
   }
 
+  Future<void> _forgotPassword() async {
+    final email = _emailCtrl.text.trim();
+    if (email.isEmpty) {
+      setState(() => _error = 'Enter your email first.');
+      return;
+    }
+    setState(() { _loading = true; _error = null; });
+    try {
+      await context.read<ap.AuthProvider>().sendPasswordResetEmail(email);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Password reset email sent. Check your inbox.'),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = _friendlyError(e.toString()));
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
   Future<void> _register() async {
     if (_nameCtrl.text.trim().isEmpty ||
         _emailCtrl.text.trim().isEmpty ||
@@ -84,6 +109,16 @@ class _AuthScreenState extends State<AuthScreen>
         _passCtrl.text,
         _nameCtrl.text.trim(),
       );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Account created. Check your email to verify your address.',
+            ),
+            duration: Duration(seconds: 5),
+          ),
+        );
+      }
     } catch (e) {
       if (mounted) {
         setState(() {
@@ -101,6 +136,7 @@ class _AuthScreenState extends State<AuthScreen>
     if (raw.contains('user-not-found'))       return 'No account found with that email.';
     if (raw.contains('weak-password'))        return 'Password must be at least 6 characters.';
     if (raw.contains('invalid-email'))        return 'Please enter a valid email address.';
+    if (raw.contains('invalid-display-name')) return 'Please enter a display name.';
     if (raw.contains('network-request-failed')) return 'No internet connection.';
     return 'Something went wrong. Please try again.';
   }
@@ -196,6 +232,7 @@ class _AuthScreenState extends State<AuthScreen>
                       emailCtrl: _emailCtrl,
                       passCtrl:  _passCtrl,
                       onSubmit:  _emailSignIn,
+                      onForgotPassword: _forgotPassword,
                       loading:   _loading,
                     ),
                     _RegisterForm(
@@ -241,11 +278,13 @@ class _AuthScreenState extends State<AuthScreen>
 class _SignInForm extends StatelessWidget {
   final TextEditingController emailCtrl, passCtrl;
   final VoidCallback onSubmit;
+  final VoidCallback onForgotPassword;
   final bool loading;
   const _SignInForm({
     required this.emailCtrl,
     required this.passCtrl,
     required this.onSubmit,
+    required this.onForgotPassword,
     required this.loading,
   });
 
@@ -284,6 +323,14 @@ class _SignInForm extends StatelessWidget {
                 child: CircularProgressIndicator(
                     color: AppColors.white, strokeWidth: 2.5))
                 : const Text('Sign In'),
+          ),
+        ),
+        const SizedBox(height: AppConstants.spaceS),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton(
+            onPressed: loading ? null : onForgotPassword,
+            child: const Text('Forgot password?'),
           ),
         ),
       ],

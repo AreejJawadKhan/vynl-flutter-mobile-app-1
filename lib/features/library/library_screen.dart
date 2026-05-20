@@ -94,9 +94,15 @@ class _LibraryScreenState extends State<LibraryScreen>
                         strokeWidth: 1.5, color: AppColors.sage),
                   ),
                   const SizedBox(width: 8),
-                  Text('Fetching album art & genres…',
+                  Expanded(
+                    child: Text(
+                      library.activeVisibleEnrich > 0
+                          ? 'Fetching art for visible songs…'
+                          : 'Updating library metadata…',
                       style: AppTextStyles.bodySmall
-                          .copyWith(color: AppColors.sageDark)),
+                          .copyWith(color: AppColors.sageDark),
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -287,9 +293,34 @@ class _SongsTab extends StatelessWidget {
   }
 }
 
-class _SongList extends StatelessWidget {
+class _SongList extends StatefulWidget {
   final List<SongItem> songs;
   const _SongList({required this.songs});
+
+  @override
+  State<_SongList> createState() => _SongListState();
+}
+
+class _SongListState extends State<_SongList> {
+  void _scheduleEnrich(BuildContext context, SongItem song) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      context.read<LibraryProvider>().enrichSongIfNeeded(song);
+    });
+  }
+
+  void _onScrollEnd(ScrollMetrics metrics) {
+    const rowHeight = 72.0;
+    final start = (metrics.pixels / rowHeight).floor();
+    final visible =
+        (metrics.viewportDimension / rowHeight).ceil() + 2;
+    final end = start + visible;
+    context.read<LibraryProvider>().enrichVisibleRange(
+          start,
+          end,
+          widget.songs,
+        );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -297,26 +328,35 @@ class _SongList extends StatelessWidget {
         AppConstants.bottomNavHeight +
         AppConstants.spaceM;
 
-    return ListView.builder(
-      padding: const EdgeInsets.only(
-        top: AppConstants.spaceXS,
-        bottom: bottomPad,
-        left: AppConstants.spaceS,
-        right: AppConstants.spaceS,
-      ),
-      itemCount: songs.length,
-      itemBuilder: (context, i) {
-        final song = songs[i];
-        return SongListTile(
-          key: ValueKey(song.id),
-          song: song,
-          queue: songs,
-          onTap: () {
-            context.read<AudioProvider>().playSong(song, songs);
-            Navigator.pushNamed(context, AppRoutes.nowPlaying);
-          },
-        );
+    return NotificationListener<ScrollNotification>(
+      onNotification: (n) {
+        if (n is ScrollEndNotification) {
+          _onScrollEnd(n.metrics);
+        }
+        return false;
       },
+      child: ListView.builder(
+        padding: const EdgeInsets.only(
+          top: AppConstants.spaceXS,
+          bottom: bottomPad,
+          left: AppConstants.spaceS,
+          right: AppConstants.spaceS,
+        ),
+        itemCount: widget.songs.length,
+        itemBuilder: (context, i) {
+          final song = widget.songs[i];
+          _scheduleEnrich(context, song);
+          return SongListTile(
+            key: ValueKey(song.id),
+            song: song,
+            queue: widget.songs,
+            onTap: () {
+              context.read<AudioProvider>().playSong(song, widget.songs);
+              Navigator.pushNamed(context, AppRoutes.nowPlaying);
+            },
+          );
+        },
+      ),
     );
   }
 }
