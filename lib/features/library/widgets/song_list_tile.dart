@@ -65,7 +65,8 @@ class SongListTile extends StatelessWidget {
             Stack(
               children: [
                 AlbumArtWidget(
-                  albumId: song.albumId,
+                  albumId:     song.albumId,
+                  albumArtUrl: song.albumArtUrl,
                   size: 44,
                 ),
                 // Playing overlay tint

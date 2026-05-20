@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-
+import '../auth/providers/auth_provider.dart' as ap;
 import '../../core/constants/app_colors.dart';
 import '../../core/constants/app_constants.dart';
 import '../../core/constants/app_text_styles.dart';
@@ -122,6 +122,8 @@ class _AvatarSection extends StatelessWidget {
 
         // ── Editable username ───────────────────────────────────────────
         _UsernameField(profile: profile),
+        const SizedBox(height: AppConstants.spaceS),
+        _UserIdCard(uid: context.read<ap.AuthProvider>().uid),
       ],
     );
   }
@@ -374,6 +376,14 @@ class _StatsCard extends StatelessWidget {
               ),
             ],
           ),
+          const SizedBox(height: AppConstants.spaceM),
+          const Divider(),
+          const SizedBox(height: AppConstants.spaceM),
+
+          Text('Listening Analytics', style: AppTextStyles.headlineSmall),
+          const SizedBox(height: AppConstants.spaceM),
+          // Genre breakdown pie-chart style
+          _GenreBreakdown(library: library),
         ],
       ),
     );
@@ -499,6 +509,31 @@ class _SettingsCardState extends State<_SettingsCard> {
     }
   }
 
+  Future<void> _confirmSignOut(BuildContext context) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Sign Out?'),
+        content: const Text(
+            'You will be returned to the login screen.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text('Sign Out',
+                style: TextStyle(color: AppColors.error)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && context.mounted) {
+      await context.read<ap.AuthProvider>().signOut();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final isDark = widget.theme.isDark;
@@ -564,6 +599,19 @@ class _SettingsCardState extends State<_SettingsCard> {
             subtitle: '1.0.0 · Phase 6',
             trailing: const SizedBox.shrink(),
           ),
+          const Divider(height: AppConstants.spaceL),
+
+          // ── Sign out ─────────────────────────────────────────────────────
+          _SettingRow(
+            icon:     Icons.logout_rounded,
+            label:    'Sign Out',
+            subtitle: context.read<ap.AuthProvider>().email,
+            trailing: TextButton(
+              onPressed: () => _confirmSignOut(context),
+              child: Text('Sign Out',
+                  style: TextStyle(color: AppColors.error)),
+            ),
+          ),
         ],
       ),
     );
@@ -608,6 +656,135 @@ class _SettingRow extends StatelessWidget {
         ),
         trailing,
       ],
+    );
+  }
+}
+
+class _GenreBreakdown extends StatelessWidget {
+  final LibraryProvider library;
+  const _GenreBreakdown({required this.library});
+
+  @override
+  Widget build(BuildContext context) {
+    final genreCounts = <String, int>{};
+    for (final song in library.allSongs) {
+      final g = song.genre.isEmpty ? 'Unknown' : song.genre;
+      genreCounts[g] = (genreCounts[g] ?? 0) + 1;
+    }
+
+    final sorted = genreCounts.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    final top = sorted.take(5).toList();
+    final total = library.totalCount;
+
+    if (total == 0) return const SizedBox.shrink();
+
+    final colors = [
+      AppColors.darkBerry,
+      AppColors.roseQuartz,
+      AppColors.sage,
+      AppColors.blushDark,
+      AppColors.stoneDark,
+    ];
+
+    return Column(
+      children: top.asMap().entries.map((entry) {
+        final i = entry.key;
+        final genre = entry.value.key;
+        final count = entry.value.value;
+        final pct = count / total;
+        final color = colors[i % colors.length];
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: AppConstants.spaceS),
+          child: Row(
+            children: [
+              SizedBox(width: 80,
+                  child: Text(genre, style: AppTextStyles.bodySmall,
+                      maxLines: 1, overflow: TextOverflow.ellipsis)),
+              const SizedBox(width: AppConstants.spaceS),
+              Expanded(
+                child: Stack(
+                  children: [
+                    Container(
+                      height: 8,
+                      decoration: BoxDecoration(
+                        color: AppColors.blushDark.withOpacity(0.3),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                    ),
+                    FractionallySizedBox(
+                      widthFactor: pct,
+                      child: Container(
+                        height: 8,
+                        decoration: BoxDecoration(
+                          color: color,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: AppConstants.spaceS),
+              Text('${(pct * 100).round()}%',
+                  style: AppTextStyles.bodySmall),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
+
+class _UserIdCard extends StatelessWidget {
+  final String uid;
+  const _UserIdCard({required this.uid});
+
+  @override
+  Widget build(BuildContext context) {
+    if (uid.isEmpty) return const SizedBox.shrink();
+    return GestureDetector(
+      onTap: () {
+        Clipboard.setData(ClipboardData(text: uid));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('User ID copied! Share it with friends.'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppConstants.spaceM,
+          vertical: AppConstants.spaceS,
+        ),
+        decoration: BoxDecoration(
+          color: AppColors.darkBerry.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(AppConstants.radiusM),
+          border: Border.all(
+            color: AppColors.darkBerry.withValues(alpha: 0.2),
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.fingerprint_rounded,
+                size: 16, color: AppColors.darkBerry),
+            const SizedBox(width: 6),
+            Text(
+              'ID: ${uid.substring(0, 8)}…',
+              style: AppTextStyles.bodySmall.copyWith(
+                color: AppColors.darkBerry,
+                fontFamily: 'monospace',
+              ),
+            ),
+            const SizedBox(width: 6),
+            const Icon(Icons.copy_rounded,
+                size: 14, color: AppColors.stone),
+          ],
+        ),
+      ),
     );
   }
 }

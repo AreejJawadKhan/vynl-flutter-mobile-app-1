@@ -3,7 +3,6 @@
 class AppRoutes {
   AppRoutes._();
 
-  static const String main       = '/';
   static const String nowPlaying = '/now-playing';
   static const String room       = '/room';
   static const String roomCreate = '/room/create';

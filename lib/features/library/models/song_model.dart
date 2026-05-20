@@ -10,10 +10,11 @@ class SongItem {
   final String artist;
   final String album;
   final String genre;
-  final int duration; // milliseconds
-  final String? uri;  // file:// URI for playback
-  final int? albumId; // used to load album art via on_audio_query
-  final int dateAdded; // Unix timestamp seconds
+  final int duration;
+  final String? uri;
+  final int? albumId;
+  final int dateAdded;
+  final String? albumArtUrl; // ← NEW: from Last.fm
 
   const SongItem({
     required this.id,
@@ -25,9 +26,9 @@ class SongItem {
     required this.dateAdded,
     this.uri,
     this.albumId,
+    this.albumArtUrl, // ← NEW
   });
 
-  /// Build a [SongItem] from on_audio_query's raw [SongModel].
   factory SongItem.fromAudioQuery(SongModel raw) {
     return SongItem(
       id:        raw.id,
@@ -39,10 +40,29 @@ class SongItem {
       uri:       raw.uri,
       albumId:   raw.albumId,
       dateAdded: raw.dateAdded ?? 0,
+      albumArtUrl: null, // enriched later
     );
   }
 
-  /// Duration formatted as m:ss (e.g. "3:42").
+  /// Returns a copy with updated genre and/or albumArtUrl
+  SongItem copyWithEnrichment({
+    String? genre,
+    String? albumArtUrl,
+  }) {
+    return SongItem(
+      id:          id,
+      title:       title,
+      artist:      artist,
+      album:       album,
+      genre:       genre ?? this.genre,
+      duration:    duration,
+      dateAdded:   dateAdded,
+      uri:         uri,
+      albumId:     albumId,
+      albumArtUrl: albumArtUrl ?? this.albumArtUrl,
+    );
+  }
+
   String get formattedDuration {
     final d = Duration(milliseconds: duration);
     final m = d.inMinutes;
@@ -50,10 +70,8 @@ class SongItem {
     return '$m:${s.toString().padLeft(2, '0')}';
   }
 
-  /// The unique string ID used in SharedPreferences liked/recent lists.
   String get persistId => id.toString();
 
-  // ── Equality ──────────────────────────────────────────────────────────────
   @override
   bool operator ==(Object other) =>
       identical(this, other) || (other is SongItem && other.id == id);
@@ -62,31 +80,26 @@ class SongItem {
   int get hashCode => id.hashCode;
 
   @override
-  String toString() => 'SongItem(id: $id, title: $title, artist: $artist)';
+  String toString() =>
+      'SongItem(id: $id, title: $title, artist: $artist, genre: $genre)';
 
-  // ── Private helpers ───────────────────────────────────────────────────────
-
-  /// Strips common file-extension suffixes from raw titles like "track.mp3".
   static String _cleanTitle(String raw) {
     return raw
-        .replaceAll(RegExp(r'\.(mp3|flac|aac|ogg|m4a|wav|wma)$',
-            caseSensitive: false), '')
+        .replaceAll(
+        RegExp(r'\.(mp3|flac|aac|ogg|m4a|wav|wma)$',
+            caseSensitive: false),
+        '')
         .trim();
   }
 }
 
-/// How the library list is currently sorted.
-enum SortMode {
-  titleAZ,
-  artistAZ,
-  recentlyAdded,
-}
+enum SortMode { titleAZ, artistAZ, recentlyAdded }
 
 extension SortModeLabel on SortMode {
   String get label {
     switch (this) {
-      case SortMode.titleAZ:      return 'Title A–Z';
-      case SortMode.artistAZ:     return 'Artist A–Z';
+      case SortMode.titleAZ:       return 'Title A–Z';
+      case SortMode.artistAZ:      return 'Artist A–Z';
       case SortMode.recentlyAdded: return 'Recently added';
     }
   }

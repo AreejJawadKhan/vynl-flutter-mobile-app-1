@@ -4,7 +4,6 @@ import '../../../core/constants/app_colors.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/constants/app_text_styles.dart';
 import '../models/song_model.dart';
-import '../providers/library_provider.dart';
 import '../providers/playlist_provider.dart';
 
 class PlaylistScreen extends StatefulWidget {

@@ -1,3 +1,4 @@
+import 'package:firebase_analytics/firebase_analytics.dart';
 import 'dart:math';
 
 import 'package:audio_session/audio_session.dart';
@@ -23,6 +24,10 @@ enum RepeatMode { off, one, all }
 ///   - Background playback via just_audio_background
 ///   - Listening-time tracking (persisted)
 class AudioProvider extends ChangeNotifier {
+  dynamic _social;
+  void updateSocial(dynamic social) {
+    _social = social;
+  }
   final AudioPlayer _player = AudioPlayer();
   LibraryProvider? _library;
 
@@ -194,14 +199,37 @@ class AudioProvider extends ChangeNotifier {
           artist:  song.artist,
           album:   song.album,
           duration: Duration(milliseconds: song.duration),
-          // Album art will be resolved from device in Phase 3.
         ),
       );
       await _player.setAudioSource(source);
       await _player.play();
+
+      // Broadcast to Firebase social feed
+      _social?.broadcastNowPlaying(
+        title: song.title,
+        artist: song.artist,
+        albumArtUrl: null, // enriched separately
+        genre: song.genre,
+      );
+
+      // Record in listening history
+      _social?.recordListeningHistory(
+        title: song.title,
+        artist: song.artist,
+        genre: song.genre,
+      );
+
+      // Firebase Analytics
+      await FirebaseAnalytics.instance.logEvent(
+        name: 'song_played',
+        parameters: {
+          'song_title': song.title,
+          'artist': song.artist,
+          'genre': song.genre,
+        },
+      );
     } catch (e) {
       debugPrint('[AudioProvider] load error for ${song.title}: $e');
-      // Advance queue on unplayable file.
       if (hasNext) await skipToNext();
     }
   }

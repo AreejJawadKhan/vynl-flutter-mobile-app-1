@@ -10,15 +10,6 @@ import '../../shared/providers/audio_provider.dart';
 import 'models/voice_models.dart';
 import 'providers/voice_provider.dart';
 
-/// AI Voice Search screen — tab 3 in the bottom navigation.
-///
-/// Layout (top to bottom):
-///   - Animated gradient background (shifts with voice state)
-///   - Status message + transcription display
-///   - Central mic button (large, Sage-colored)
-///   - Sound wave visualiser (animates while listening)
-///   - Suggestion chips (tap to simulate a command)
-///   - Last 3 command history
 class VoiceScreen extends StatefulWidget {
   const VoiceScreen({super.key});
 
@@ -28,12 +19,8 @@ class VoiceScreen extends StatefulWidget {
 
 class _VoiceScreenState extends State<VoiceScreen>
     with TickerProviderStateMixin {
-
-  // Background gradient shift animation
   late final AnimationController _bgCtrl;
   late final Animation<double>   _bgAnim;
-
-  // Sound wave animation
   late final AnimationController _waveCtrl;
 
   @override
@@ -52,7 +39,6 @@ class _VoiceScreenState extends State<VoiceScreen>
       duration: const Duration(milliseconds: 600),
     );
 
-    // Initialise speech on first load
     WidgetsBinding.instance.addPostFrameCallback((_) {
       context.read<VoiceProvider>().initialise();
     });
@@ -70,7 +56,7 @@ class _VoiceScreenState extends State<VoiceScreen>
     final voice = context.watch<VoiceProvider>();
     final audio = context.watch<AudioProvider>();
 
-    // Sync wave animation to listening state
+    // Sync wave animation
     if (voice.isListening && !_waveCtrl.isAnimating) {
       _waveCtrl.repeat();
     } else if (!voice.isListening && _waveCtrl.isAnimating) {
@@ -90,7 +76,7 @@ class _VoiceScreenState extends State<VoiceScreen>
               colors: [
                 Color.lerp(
                   AppColors.blush,
-                  AppColors.sageLight.withOpacity(0.4),
+                  AppColors.sageLight.withValues(alpha: 0.4),
                   _bgAnim.value,
                 )!,
                 Theme.of(context).scaffoldBackgroundColor,
@@ -100,51 +86,49 @@ class _VoiceScreenState extends State<VoiceScreen>
           child: child,
         ),
         child: SafeArea(
-          child: Column(
-            children: [
-              // ── Status + transcription ─────────────────────────────────
-              Expanded(
-                flex: 3,
-                child: _StatusArea(voice: voice, audio: audio),
-              ),
-
-              // ── Central mic button ────────────────────────────────────
-              _MicButton(voice: voice, waveCtrl: _waveCtrl),
-
-              const SizedBox(height: AppConstants.spaceM),
-
-              // ── Sound wave ────────────────────────────────────────────
-              SizedBox(
-                height: 48,
-                child: _SoundWave(
-                  controller: _waveCtrl,
-                  isActive: voice.isListening,
+          child: Padding(
+            // Extra bottom padding for mini-player + nav bar
+            padding: EdgeInsets.only(
+              bottom: AppConstants.miniPlayerCollapsedHeight +
+                  AppConstants.bottomNavHeight +
+                  AppConstants.spaceM,
+            ),
+            child: Column(
+              children: [
+                // ── Status + transcription ─────────────────────────────
+                Expanded(
+                  flex: 3,
+                  child: _StatusArea(voice: voice, audio: audio),
                 ),
-              ),
 
-              const SizedBox(height: AppConstants.spaceL),
+                // ── Mic button ────────────────────────────────────────
+                _MicButton(voice: voice, waveCtrl: _waveCtrl),
 
-              // ── Suggestion chips ──────────────────────────────────────
-              _SuggestionChips(voice: voice),
+                const SizedBox(height: AppConstants.spaceM),
 
-              const SizedBox(height: AppConstants.spaceL),
-
-              const SizedBox(height: AppConstants.spaceL),
-
-              // ── Command history ───────────────────────────────────────
-              Expanded(
-                child: SingleChildScrollView(
-                  child: _CommandHistory(history: voice.history),
+                // ── Sound wave ────────────────────────────────────────
+                SizedBox(
+                  height: 48,
+                  child: _SoundWave(
+                    controller: _waveCtrl,
+                    isActive: voice.isListening,
+                  ),
                 ),
-              ),
 
-              // Bottom padding for mini-player + nav
-              const SizedBox(
-                height: AppConstants.miniPlayerCollapsedHeight +
-                    AppConstants.bottomNavHeight +
-                    AppConstants.spaceM,
-              ),
-            ],
+                const SizedBox(height: AppConstants.spaceL),
+
+                // ── Suggestion chips ──────────────────────────────────
+                _SuggestionChips(voice: voice),
+
+                const SizedBox(height: AppConstants.spaceL),
+
+                // ── Command history ───────────────────────────────────
+                if (voice.history.isNotEmpty)
+                  Expanded(
+                    child: _CommandHistory(history: voice.history),
+                  ),
+              ],
+            ),
           ),
         ),
       ),
@@ -169,11 +153,9 @@ class _StatusArea extends StatelessWidget {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          // State icon
           _StateIcon(state: voice.state),
           const SizedBox(height: AppConstants.spaceM),
 
-          // Status message
           if (voice.statusMessage.isNotEmpty)
             AnimatedSwitcher(
               duration: const Duration(milliseconds: 250),
@@ -187,7 +169,6 @@ class _StatusArea extends StatelessWidget {
               ),
             ),
 
-          // Live transcription (shown while listening)
           if (voice.transcript.isNotEmpty) ...[
             const SizedBox(height: AppConstants.spaceS),
             Container(
@@ -196,14 +177,14 @@ class _StatusArea extends StatelessWidget {
                 vertical:   AppConstants.spaceS,
               ),
               decoration: BoxDecoration(
-                color: AppColors.darkBerry.withOpacity(0.07),
-                borderRadius: BorderRadius.circular(AppConstants.radiusM),
+                color: AppColors.darkBerry.withValues(alpha: 0.07),
+                borderRadius:
+                BorderRadius.circular(AppConstants.radiusM),
               ),
               child: Text(
                 '"${voice.transcript}"',
-                style: AppTextStyles.bodyMedium.copyWith(
-                  fontStyle: FontStyle.italic,
-                ),
+                style: AppTextStyles.bodyMedium
+                    .copyWith(fontStyle: FontStyle.italic),
                 textAlign: TextAlign.center,
                 maxLines: 3,
                 overflow: TextOverflow.ellipsis,
@@ -211,12 +192,22 @@ class _StatusArea extends StatelessWidget {
             ),
           ],
 
-          // Now playing info (shown on whatsPlaying success)
           if (voice.state == VoiceState.success &&
               voice.lastCommand?.intent == VoiceIntent.whatsPlaying &&
               audio.currentSong != null) ...[
             const SizedBox(height: AppConstants.spaceM),
             _NowPlayingCard(audio: audio),
+          ],
+
+          // ── Idle hint ──────────────────────────────────────────────
+          if (voice.state == VoiceState.idle) ...[
+            const SizedBox(height: AppConstants.spaceM),
+            Text(
+              'Tap the mic and say something like\n"Play happy music" or "Skip"',
+              style: AppTextStyles.bodySmall
+                  .copyWith(color: AppColors.stoneDark),
+              textAlign: TextAlign.center,
+            ),
           ],
         ],
       ),
@@ -225,10 +216,10 @@ class _StatusArea extends StatelessWidget {
 
   Color _colorForState(VoiceState state) {
     switch (state) {
-      case VoiceState.listening:   return AppColors.sage;
-      case VoiceState.success:     return AppColors.darkBerry;
-      case VoiceState.error:       return AppColors.roseQuartz;
-      default:                     return AppColors.stoneDark;
+      case VoiceState.listening:  return AppColors.sage;
+      case VoiceState.success:    return AppColors.darkBerry;
+      case VoiceState.error:      return AppColors.roseQuartz;
+      default:                    return AppColors.stoneDark;
     }
   }
 }
@@ -284,11 +275,10 @@ class _NowPlayingCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(AppConstants.spaceM),
       decoration: BoxDecoration(
-        color:        AppColors.darkBerry.withOpacity(0.08),
+        color: AppColors.darkBerry.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(AppConstants.radiusL),
         border: Border.all(
-          color: AppColors.darkBerry.withOpacity(0.15),
-        ),
+            color: AppColors.darkBerry.withValues(alpha: 0.15)),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -345,13 +335,13 @@ class _MicButton extends StatelessWidget {
         height: isListening ? 96 : 80,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: isListening
-              ? AppColors.darkBerry
-              : AppColors.sage,
+          color: isListening ? AppColors.darkBerry : AppColors.sage,
           boxShadow: [
             BoxShadow(
-              color: (isListening ? AppColors.darkBerry : AppColors.sage)
-                  .withOpacity(isListening ? 0.45 : 0.30),
+              color: (isListening
+                  ? AppColors.darkBerry
+                  : AppColors.sage)
+                  .withValues(alpha: isListening ? 0.45 : 0.30),
               blurRadius:   isListening ? 28 : 16,
               spreadRadius: isListening ? 6  : 2,
             ),
@@ -359,48 +349,51 @@ class _MicButton extends StatelessWidget {
         ),
         child: isProcessing
             ? const Center(
-                child: SizedBox(
-                  width: 28, height: 28,
-                  child: CircularProgressIndicator(
-                    color:       AppColors.white,
-                    strokeWidth: 2.5,
-                  ),
-                ),
-              )
+          child: SizedBox(
+            width: 28, height: 28,
+            child: CircularProgressIndicator(
+              color:       AppColors.white,
+              strokeWidth: 2.5,
+            ),
+          ),
+        )
             : Icon(
-                isListening ? Icons.mic_rounded : Icons.mic_none_rounded,
-                color: AppColors.white,
-                size:  isListening ? 44 : 36,
-              ),
+          isListening
+              ? Icons.mic_rounded
+              : Icons.mic_none_rounded,
+          color: AppColors.white,
+          size: isListening ? 44 : 36,
+        ),
       ),
     );
   }
 }
 
-// ── Sound wave visualiser ─────────────────────────────────────────────────────
+// ── Sound wave ────────────────────────────────────────────────────────────────
 
-/// Five bars that animate up/down independently while the mic is active.
 class _SoundWave extends StatelessWidget {
   final AnimationController controller;
   final bool isActive;
-  const _SoundWave({required this.controller, required this.isActive});
+  const _SoundWave(
+      {required this.controller, required this.isActive});
 
   @override
   Widget build(BuildContext context) {
     if (!isActive) {
-      // Static flat bars when idle
       return Row(
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.center,
-        children: List.generate(7, (i) => _Bar(
-          height:     4,
-          color:      AppColors.stone.withOpacity(0.4),
-          margin:     const EdgeInsets.symmetric(horizontal: 3),
-        )),
+        children: List.generate(
+          7,
+              (i) => _Bar(
+            height: 4,
+            color:  AppColors.stone.withValues(alpha: 0.4),
+            margin: const EdgeInsets.symmetric(horizontal: 3),
+          ),
+        ),
       );
     }
 
-    // Animated bars with staggered phase offsets
     const barCount = 7;
     const heights  = [18.0, 32.0, 42.0, 48.0, 42.0, 32.0, 18.0];
     final phases   = List.generate(barCount, (i) => i / barCount);
@@ -414,16 +407,18 @@ class _SoundWave extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.center,
           children: List.generate(barCount, (i) {
             final phase  = phases[i];
-            final factor = (math.sin((t + phase) * 2 * math.pi) + 1) / 2;
-            final h      = 6 + heights[i] * factor;
+            final factor =
+                (math.sin((t + phase) * 2 * math.pi) + 1) / 2;
+            final h = 6 + heights[i] * factor;
             return _Bar(
               height: h,
-              color:  Color.lerp(
-                AppColors.sage.withOpacity(0.5),
+              color: Color.lerp(
+                AppColors.sage.withValues(alpha: 0.5),
                 AppColors.darkBerry,
                 factor,
               )!,
-              margin: const EdgeInsets.symmetric(horizontal: 3),
+              margin:
+              const EdgeInsets.symmetric(horizontal: 3),
             );
           }),
         );
@@ -436,7 +431,10 @@ class _Bar extends StatelessWidget {
   final double height;
   final Color  color;
   final EdgeInsets margin;
-  const _Bar({required this.height, required this.color, required this.margin});
+  const _Bar(
+      {required this.height,
+        required this.color,
+        required this.margin});
 
   @override
   Widget build(BuildContext context) {
@@ -465,39 +463,33 @@ class _SuggestionChips extends StatelessWidget {
       height: 40,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: AppConstants.spaceM),
+        padding: const EdgeInsets.symmetric(
+            horizontal: AppConstants.spaceM),
         itemCount: VoiceKeywords.suggestions.length,
         separatorBuilder: (_, __) =>
-            const SizedBox(width: AppConstants.spaceS),
+        const SizedBox(width: AppConstants.spaceS),
         itemBuilder: (_, i) {
           final suggestion = VoiceKeywords.suggestions[i];
           return ActionChip(
             label: Text(
               suggestion,
-              style: AppTextStyles.bodySmall.copyWith(
-                color: AppColors.darkBerry,
-              ),
+              style: AppTextStyles.bodySmall
+                  .copyWith(color: AppColors.darkBerry),
             ),
-            backgroundColor: AppColors.darkBerry.withOpacity(0.07),
+            backgroundColor:
+            AppColors.darkBerry.withValues(alpha: 0.07),
             side: BorderSide(
-              color: AppColors.darkBerry.withOpacity(0.2),
+              color: AppColors.darkBerry.withValues(alpha: 0.2),
               width: 0.8,
             ),
             onPressed: () {
               HapticFeedback.selectionClick();
-              // Simulate the command by injecting it directly as a transcript
-              _simulateCommand(context, voice, suggestion);
+              voice.simulateTranscript(suggestion);
             },
           );
         },
       ),
     );
-  }
-
-  void _simulateCommand(
-      BuildContext context, VoiceProvider voice, String text) {
-    // Feed the suggestion text directly into the parser
-    voice.simulateTranscript(text);
   }
 }
 
@@ -509,17 +501,17 @@ class _CommandHistory extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (history.isEmpty) return const SizedBox.shrink();
-
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: AppConstants.spaceM),
+      padding: const EdgeInsets.symmetric(
+          horizontal: AppConstants.spaceM),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Text('Recent commands', style: AppTextStyles.label),
           const SizedBox(height: AppConstants.spaceS),
           ...history.map(
-            (cmd) => Padding(
+                (cmd) => Padding(
               padding: const EdgeInsets.only(bottom: 6),
               child: Row(
                 children: [
@@ -530,8 +522,7 @@ class _CommandHistory extends StatelessWidget {
                     child: Text(
                       '"${cmd.transcript}"',
                       style: AppTextStyles.bodySmall.copyWith(
-                        fontStyle: FontStyle.italic,
-                      ),
+                          fontStyle: FontStyle.italic),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -539,9 +530,8 @@ class _CommandHistory extends StatelessWidget {
                   const SizedBox(width: 8),
                   Text(
                     cmd.description,
-                    style: AppTextStyles.label.copyWith(
-                      color: AppColors.sage,
-                    ),
+                    style: AppTextStyles.label
+                        .copyWith(color: AppColors.sage),
                   ),
                 ],
               ),

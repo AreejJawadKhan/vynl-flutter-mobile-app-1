@@ -4,10 +4,9 @@ import '../../features/library/library_screen.dart';
 import '../../features/rooms/rooms_screen.dart';
 import '../../features/voice/voice_screen.dart';
 import '../../features/profile/profile_screen.dart';
+import '../../features/social/social_screen.dart';
 import 'mini_player_stub.dart';
 
-/// The root scaffold that hosts the bottom navigation and all tab screens.
-/// The mini-player sits above the bottom nav and persists across all tabs.
 class MainScaffold extends StatefulWidget {
   const MainScaffold({super.key});
 
@@ -18,9 +17,9 @@ class MainScaffold extends StatefulWidget {
 class _MainScaffoldState extends State<MainScaffold> {
   int _selectedIndex = 0;
 
-  // All tab screens — indexed to match the nav bar destinations.
   static const List<Widget> _screens = [
     LibraryScreen(),
+    SocialScreen(),   // ← Social is now tab 1
     RoomsScreen(),
     VoiceScreen(),
     ProfileScreen(),
@@ -35,7 +34,6 @@ class _MainScaffoldState extends State<MainScaffold> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // We handle our own bottom padding to fit the mini-player above the nav.
       extendBody: true,
       body: IndexedStack(
         index: _selectedIndex,
@@ -49,10 +47,7 @@ class _MainScaffoldState extends State<MainScaffold> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // Mini-player slot — floats above the nav bar.
         const MiniPlayerStub(),
-
-        // The actual navigation bar.
         NavigationBar(
           selectedIndex: _selectedIndex,
           onDestinationSelected: _onDestinationSelected,
@@ -65,7 +60,12 @@ class _MainScaffoldState extends State<MainScaffold> {
             ),
             NavigationDestination(
               icon: Icon(Icons.people_outline_rounded),
-              selectedIcon: Icon(Icons.people_alt_rounded),
+              selectedIcon: Icon(Icons.people_rounded),
+              label: 'Social',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.meeting_room_outlined),
+              selectedIcon: Icon(Icons.meeting_room_rounded),
               label: 'Rooms',
             ),
             NavigationDestination(

@@ -137,8 +137,9 @@ class _SongPickerSheetState extends State<SongPickerSheet> {
                             horizontal: AppConstants.spaceM,
                             vertical: 2),
                         leading: AlbumArtWidget(
-                          albumId: song.albumId,
-                          size:    44,
+                          albumId:     song.albumId,
+                          albumArtUrl: song.albumArtUrl,
+                          size: 44,
                         ),
                         title: Text(
                           song.title,

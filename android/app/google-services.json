@@ -1,0 +1,40 @@
+{
+  "project_info": {
+    "project_number": "368946897111",
+    "firebase_url": "https://vynl-b454c-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "vynl-b454c",
+    "storage_bucket": "vynl-b454c.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:368946897111:android:afc4688e8518ade2b15092",
+        "android_client_info": {
+          "package_name": "com.example.music_player"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "368946897111-7ir6tm6ns8upnvicnf13g8uund83o4lb.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBI43vaZ3IJ9ZPxiss8_DVMHkkOiR96KJ8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "368946897111-7ir6tm6ns8upnvicnf13g8uund83o4lb.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -36,14 +36,41 @@ dependencies:
   flutter_slidable: ^3.0.1
 
   cupertino_icons: ^1.0.2
+  firebase_core: ^4.9.0
+  firebase_auth: ^6.5.1
+  firebase_database: ^12.4.1
+  google_sign_in: ^7.2.0
+  firebase_analytics: ^12.4.1
+  flutter_dotenv: ^6.0.1
+
+  # Networking
+  http: ^1.2.1
+  dio: ^5.4.3+1
+
+  # UI extras
+  flutter_animate: ^4.5.0
+  shimmer: ^3.0.0
+  lottie: ^3.1.2
 
 dev_dependencies:
+  flutter_launcher_icons: ^0.14.1
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.1
 
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/icons/app_icon.png"
+  min_sdk_android: 21
+  adaptive_icon_background: "#7D0531"  # darkBerry color
+  adaptive_icon_foreground: "assets/icons/app_icon_foreground.png"
+
 flutter:
   uses-material-design: true
   assets:
+    - .env
     - assets/images/
+    - assets/icons/app_icon.png
+    - assets/icons/app_icon_foreground.png
     - assets/icons/

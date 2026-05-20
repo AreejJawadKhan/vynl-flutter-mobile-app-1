@@ -38,11 +38,13 @@ class VinylWidget extends StatefulWidget {
   final int? albumId;
   final VoidCallback onDoubleTap;
   final VoidCallback onLongPress;
+  final String? albumArtUrl;
 
   const VinylWidget({
     super.key,
     required this.audio,
     required this.albumId,
+    this.albumArtUrl,
     required this.onDoubleTap,
     required this.onLongPress,
   });
@@ -352,6 +354,7 @@ class _VinylWidgetState extends State<VinylWidget>
                       height: labelSize,
                       child: AlbumArtWidget(
                         albumId:      widget.albumId,
+                        albumArtUrl:  widget.albumArtUrl,
                         size:         labelSize,
                         borderRadius: labelSize / 2,
                       ),

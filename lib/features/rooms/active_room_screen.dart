@@ -76,7 +76,7 @@ class _ActiveRoomScreenState extends State<ActiveRoomScreen> {
 
     return PopScope(
       canPop: false,
-      onPopInvoked: (didPop) async {
+      onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
         final leave = await _confirmLeave(context);
         if (leave && context.mounted) {

@@ -7,7 +7,6 @@ import '../../core/constants/app_constants.dart';
 import '../../core/constants/app_text_styles.dart';
 import '../../features/library/models/song_model.dart';
 import '../../features/library/providers/library_provider.dart';
-import '../../features/library/widgets/album_art_widget.dart';
 import '../../shared/providers/audio_provider.dart' as ap;
 import '../../shared/widgets/app_snack_bar.dart';
 import 'widgets/vinyl_widget.dart';
@@ -47,6 +46,7 @@ class NowPlayingScreen extends StatelessWidget {
                 child: VinylWidget(
                   audio:       audio,
                   albumId:     song.albumId,
+                  albumArtUrl: song.albumArtUrl, // ← add this
                   onDoubleTap: () async {
                     await library.toggleLike(song);
                     if (context.mounted) {
@@ -170,70 +170,6 @@ class _BackBtn extends StatelessWidget {
 // ── Album art fallback (Phase 2 reference — NOT used in active UI) ───────────
 // VinylWidget is the active implementation. This class is kept as a documented
 // reference in case VinylWidget needs to be temporarily disabled for debugging.
-
-class _AlbumArtSection extends StatelessWidget {
-  final ap.AudioProvider audio;
-  final int? albumId;
-  const _AlbumArtSection({required this.audio, required this.albumId});
-
-  @override
-  Widget build(BuildContext context) {
-    final size        = MediaQuery.of(context).size.width * 0.68;
-    final isPlaying   = audio.isPlaying;
-    final isBuffering = audio.isBuffering;
-
-    return GestureDetector(
-      onTap: () => audio.playPause(),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeInOut,
-        width:  isPlaying ? size : size * 0.88,
-        height: isPlaying ? size : size * 0.88,
-        decoration: BoxDecoration(
-          shape: BoxShape.circle,
-          boxShadow: [
-            BoxShadow(
-              color: AppColors.darkBerry.withOpacity(isPlaying ? 0.25 : 0.10),
-              blurRadius: isPlaying ? 40 : 20,
-              spreadRadius: isPlaying ? 8 : 2,
-            ),
-          ],
-        ),
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            AlbumArtCircle(
-              albumId: albumId,
-              size: isPlaying ? size : size * 0.88,
-            ),
-            if (isBuffering)
-              Container(
-                width: size, height: size,
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.35),
-                  shape: BoxShape.circle,
-                ),
-                child: const Center(
-                  child: CircularProgressIndicator(
-                    color: AppColors.white, strokeWidth: 2.5),
-                ),
-              ),
-            if (!isPlaying && !isBuffering)
-              Container(
-                width: size * 0.88, height: size * 0.88,
-                decoration: BoxDecoration(
-                  color: Colors.black.withOpacity(0.22),
-                  shape: BoxShape.circle,
-                ),
-                child: const Icon(Icons.play_arrow_rounded,
-                    color: AppColors.white, size: 56),
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
 
 // ── Song info ─────────────────────────────────────────────────────────────────
 

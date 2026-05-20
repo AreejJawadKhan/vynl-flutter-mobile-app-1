@@ -111,8 +111,13 @@ class VoiceKeywords {
 
   // ── What's playing triggers ───────────────────────────────────────────────
   static const List<String> whatsPlaying = [
-    'what', 'song', 'playing', 'who sings', 'artist', 'name',
-    'what is this', 'what song is this', 'who is this',
+    'what song is this',
+    'who sings this',
+    'what is this song',
+    'who is this',
+    'song name',
+    'what song',
+    'identify song',
   ];
 
   // ── Like triggers ─────────────────────────────────────────────────────────

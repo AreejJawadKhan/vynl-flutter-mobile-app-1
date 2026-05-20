@@ -82,7 +82,8 @@ class _MiniPlayerStubState extends State<MiniPlayerStub> {
     return Row(
       children: [
         AlbumArtWidget(
-          albumId: song.albumId,
+          albumId:     song.albumId,
+          albumArtUrl: song.albumArtUrl,
           size: AppConstants.albumArtMiniSmall,
         ),
         const SizedBox(width: 12),
@@ -154,7 +155,8 @@ class _MiniPlayerStubState extends State<MiniPlayerStub> {
         Row(
           children: [
             AlbumArtWidget(
-              albumId: song.albumId,
+              albumId:     song.albumId,
+              albumArtUrl: song.albumArtUrl,
               size: AppConstants.albumArtMiniLarge,
             ),
             const SizedBox(width: 12),
