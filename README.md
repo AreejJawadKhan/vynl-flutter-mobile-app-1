@@ -1,7 +1,5 @@
 # Vynl — AI Music Player
-
-**BS Computer Science — 6th Semester**  
-**Mobile Applications Development**  
+ 
 **Project: Vynl (`music_player`)**
 
 Vynl is an Android-first Flutter music player that plays **local audio**, enriches your library with **Last.fm** metadata, adds **social listening** and **blend compatibility** via **Firebase**, and understands voice commands through **on-device speech recognition** plus **Google Gemini** intent parsing.
